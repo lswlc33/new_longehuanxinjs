@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="mdui-theme-auto">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>商品预下单</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/mdui@2/mdui.css">
+    <script src="https://unpkg.com/mdui@2/mdui.global.js"></script>
+
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            background-color: rgb(var(--mdui-color-surface));
+            color: rgb(var(--mdui-color-on-surface));
+            font-family: 'Roboto', 'PingFang SC', sans-serif;
+            display: flex;
+            justify-content: center;
+            padding-top: 80px;
+            padding-bottom: 20px;
+            margin: 0;
+        }
+
+        /* --- 顶部状态栏 --- */
+        .status-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 64px;
+            background-color: rgb(var(--mdui-color-surface-container));
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+        }
+
+        .shop-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-grow: 1;
+            overflow: hidden;
+        }
+
+        .shop-name {
+            font-weight: 700;
+            font-size: 16px;
+            color: rgb(var(--mdui-color-primary));
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .token-status {
+            font-size: 12px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            background-color: rgb(var(--mdui-color-error-container));
+            color: rgb(var(--mdui-color-on-error-container));
+            transition: all 0.3s;
+            white-space: nowrap;
+        }
+
+        .token-status.active {
+            background-color: rgb(var(--mdui-color-primary-container));
+            color: rgb(var(--mdui-color-on-primary-container));
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        /* --- 主容器 --- */
+        .container {
+            width: 100%;
+            max-width: 500px;
+            padding: 0 16px;
+            padding-bottom: 100px;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        mdui-card {
+            padding: 20px;
+            border-radius: 24px;
+            width: 100%;
+            overflow: visible;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            font-size: 14px;
+            font-weight: 500;
+            color: rgb(var(--mdui-color-primary));
+        }
+
+        .btn-small {
+            height: 32px;
+            min-width: 72px;
+            font-size: 13px;
+        }
+
+        .row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .row>* {
+            flex: 1;
+        }
+
+        mdui-text-field,
+        mdui-select {
+            width: 100%;
+            margin-bottom: 12px;
+        }
+
+        /* --- Chip 样式 --- */
+        .chip-container {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+
+        .chip-container mdui-chip {
+            flex-grow: 1;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .drawer-search>mdui-button {
+            margin-top: 8px;
+        }
+
+        .readonly-chips {
+            pointer-events: none;
+        }
+
+        .readonly-chips mdui-chip[selected] {
+            --mdui-color-secondary-container: rgb(var(--mdui-color-primary));
+            --mdui-color-on-secondary-container: rgb(var(--mdui-color-on-primary));
+            font-weight: bold;
+        }
+
+        .fab-submit {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 1000;
+        }
+
+        /* --- 全屏侧边栏样式 --- */
+        #orderDrawer {
+            width: 100vw;
+            max-width: 100vw;
+            height: 100vh;
+        }
+
+        .drawer-content {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            background-color: rgb(var(--mdui-color-surface-container-low));
+        }
+
+        .drawer-header {
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background-color: rgb(var(--mdui-color-surface));
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            z-index: 10;
+        }
+
+        .drawer-search {
+            padding: 16px 24px;
+            display: flex;
+            gap: 12px;
+            background-color: rgb(var(--mdui-color-surface));
+            margin-bottom: 1px;
+        }
+
+        .order-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: grid;
+            gap: 16px;
+            align-content: start;
+        }
+
+        /* --- 订单卡片样式 --- */
+        .order-card {
+            background-color: rgb(var(--mdui-color-surface));
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            position: relative;
+            transition: transform 0.2s;
+        }
+
+        .order-card:hover {
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        /* 卡片头部 */
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .buyer-name {
+            font-size: 18px;
+            font-weight: 700;
+            color: rgb(var(--mdui-color-on-surface));
+        }
+
+        .buyer-mobile {
+            font-size: 14px;
+            color: rgb(var(--mdui-color-outline));
+            margin-top: 2px;
+        }
+
+        /* 状态标签 */
+        .status-badge {
+            font-size: 13px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 6px;
+        }
+
+        /* 状态颜色定义 */
+        .status-0 {
+            background-color: #FFF3E0;
+            color: #E65100;
+            border: 1px solid #FFE0B2;
+        }
+
+        /* 待付款 */
+        .status-1 {
+            background-color: #E3F2FD;
+            color: #1565C0;
+            border: 1px solid #BBDEFB;
+        }
+
+        /* 支付中 */
+        .status-2 {
+            background-color: #E8F5E9;
+            color: #2E7D32;
+            border: 1px solid #C8E6C9;
+        }
+
+        /* 已付款 */
+        .status-3,
+        .status-4,
+        .status-6 {
+            background-color: #FFEBEE;
+            color: #C62828;
+            border: 1px solid #FFCDD2;
+        }
+
+        /* 失败/取消 */
+        .status-5 {
+            background-color: #F5F5F5;
+            color: #616161;
+            border: 1px solid #E0E0E0;
+        }
+
+        /* 未知 */
+
+        /* 信息网格 */
+        .info-grid {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            gap: 8px 16px;
+            font-size: 13px;
+            color: rgb(var(--mdui-color-on-surface-variant));
+            background-color: rgb(var(--mdui-color-surface-container-low));
+            padding: 12px;
+            border-radius: 12px;
+        }
+
+        .label {
+            color: rgb(var(--mdui-color-outline));
+        }
+
+        .value {
+            font-family: 'Roboto Mono', monospace;
+            word-break: break-all;
+        }
+
+        /* 底部价格栏 */
+        .card-footer {
+            margin-top: 4px;
+            padding-top: 12px;
+            border-top: 1px dashed rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .price-label {
+            font-size: 13px;
+            color: rgb(var(--mdui-color-on-surface-variant));
+        }
+
+        .price-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: rgb(var(--mdui-color-primary));
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="status-bar">
+        <div class="shop-info">
+            <mdui-icon name="store"></mdui-icon>
+            <span id="displayShopName" class="shop-name">正在加载...</span>
+            <span id="tokenStatusBadge" class="token-status">未连接</span>
+        </div>
+        <div class="action-buttons">
+            <mdui-button-icon icon="list_alt" onclick="openOrderDrawer()" tooltip="订单列表"></mdui-button-icon>
+            <mdui-button-icon icon="settings" onclick="openConfigDialog()" tooltip="API设置"></mdui-button-icon>
+            <mdui-button-icon icon="refresh" onclick="autoLogin()" tooltip="刷新Token"></mdui-button-icon>
+        </div>
+    </div>
+
+    <mdui-navigation-drawer id="orderDrawer" placement="right" modal close-on-overlay-click>
+        <div class="drawer-content">
+            <div class="drawer-header">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <mdui-button-icon icon="arrow_back"
+                        onclick="document.getElementById('orderDrawer').open = false"></mdui-button-icon>
+                    <span class="section-title" style="font-size: 20px;">门店订单列表</span>
+                </div>
+                <mdui-button variant="text" onclick="fetchOrders()">刷新列表</mdui-button>
+            </div>
+
+            <div class="drawer-search">
+                <mdui-text-field id="orderSearchMobile" icon="search" placeholder="手机号或者订单号" variant="outlined"
+                    style="flex: 1;" onkeydown="if(event.key==='Enter') fetchOrders()"></mdui-text-field>
+                <mdui-button variant="filled" onclick="fetchOrders()">搜索</mdui-button>
+            </div>
+
+            <div id="orderListContainer" class="order-list">
+                <div
+                    style="grid-column: 1 / -1; text-align: center; padding-top: 100px; color: #999; display: flex; flex-direction: column; align-items: center; gap: 10px;">
+                    <mdui-icon name="manage_search" style="font-size: 48px; opacity: 0.5;"></mdui-icon>
+                    <span>点击搜索获取订单数据</span>
+                </div>
+            </div>
+        </div>
+    </mdui-navigation-drawer>
+
+    <mdui-dialog id="configDialog" close-on-overlay-click>
+        <span slot="headline">API 配置</span>
+        <div slot="description">
+            <p style="margin-bottom: 16px; font-size: 13px; opacity: 0.7;">配置将保存到本地浏览器缓存中。</p>
+            <mdui-text-field id="configPayloadInput" label="Login Payload (Code)" variant="outlined"
+                helper="用于获取 Token 的身份标识字符串">
+            </mdui-text-field>
+        </div>
+        <mdui-button slot="action" variant="text" onclick="closeConfigDialog()">取消</mdui-button>
+        <mdui-button slot="action" variant="filled" onclick="saveConfig()">保存并重连</mdui-button>
+    </mdui-dialog>
+
+    <mdui-dialog id="errorDialog" close-on-overlay-click>
+        <span slot="headline">提示</span>
+        <div slot="description" id="errorContent">发生错误</div>
+        <mdui-button slot="action" variant="text"
+            onclick="document.querySelector('#errorDialog').open = false">关闭</mdui-button>
+    </mdui-dialog>
+
+    <mdui-dialog id="confirmDialog" close-on-overlay-click>
+        <span slot="headline">取消订单确认</span>
+        <div slot="description">
+            您确定要取消该订单吗？此操作不可撤销。
+        </div>
+        <mdui-button slot="action" variant="text" onclick="closeConfirmDialog()">暂不取消</mdui-button>
+        <mdui-button slot="action" variant="filled" id="confirmCancelBtn"
+            style="background-color: rgb(var(--mdui-color-error)); color: white;">确认取消</mdui-button>
+    </mdui-dialog>
+
+    <div class="container">
+
+        <mdui-card variant="filled">
+            <div class="section-header">
+                <span class="section-title">智能填充</span>
+                <mdui-button variant="tonal" class="btn-small" onclick="smartParse()">
+                    智能识别
+                </mdui-button>
+            </div>
+            <mdui-text-field id="smartInput" variant="outlined" rows="3" placeholder="在此粘贴：周 130xxxxx30 天宁区竹林南路3号">
+            </mdui-text-field>
+        </mdui-card>
+
+        <mdui-card variant="filled">
+            <div class="section-header">
+                <span class="section-title">补贴资格申领人信息</span>
+                <mdui-button variant="tonal" class="btn-small" onclick="checkQualification()">
+                    资格核验
+                </mdui-button>
+            </div>
+
+            <mdui-text-field id="buyerMobile" label="手机号" variant="outlined"></mdui-text-field>
+
+            <div id="productCategoryChips" class="chip-container readonly-chips">
+                <mdui-chip variant="filter" selectable value="A01">电视</mdui-chip>
+                <mdui-chip variant="filter" selectable value="A02">冰箱</mdui-chip>
+                <mdui-chip variant="filter" selectable value="A03">洗衣机</mdui-chip>
+                <mdui-chip variant="filter" selectable value="A04">空调</mdui-chip>
+                <mdui-chip variant="filter" selectable value="A05">电脑</mdui-chip>
+                <mdui-chip variant="filter" selectable value="A06">热水器</mdui-chip>
+                <mdui-chip variant="filter" selectable value="B01">手机</mdui-chip>
+                <mdui-chip variant="filter" selectable value="B02">平板</mdui-chip>
+                <mdui-chip variant="filter" selectable value="B03">手表手环</mdui-chip>
+                <mdui-chip variant="filter" selectable value="B04">智能眼镜</mdui-chip>
+            </div>
+
+            <mdui-text-field id="buyerName" label="姓名" variant="outlined" type="hidden"></mdui-text-field>
+        </mdui-card>
+
+        <mdui-card variant="filled">
+            <div class="section-header">
+                <span class="section-title">门店订单信息</span>
+                <mdui-checkbox id="autoOrderNumCheckbox" onchange="toggleOrderInput()" checked>自动单号</mdui-checkbox>
+            </div>
+
+            <mdui-text-field id="shopOrderNumber" label="销售单号" placeholder="请输入订单号" disabled value="提交时自动生成"
+                variant="outlined"></mdui-text-field>
+
+            <div class="row">
+                <mdui-select id="citySelect" label="城市" variant="outlined"></mdui-select>
+                <mdui-select id="districtSelect" label="区县" variant="outlined"></mdui-select>
+            </div>
+
+            <mdui-text-field id="detailAddress" label="详细地址" variant="outlined"></mdui-text-field>
+        </mdui-card>
+
+        <mdui-card variant="filled">
+            <div class="section-header">
+                <span class="section-title">商品信息</span>
+            </div>
+
+            <mdui-text-field id="goodsCode" label="商品编号" variant="outlined" onblur="queryGoodsInfo()"></mdui-text-field>
+            <mdui-text-field id="goodsName" label="商品名称" placeholder="自动计算" variant="outlined"
+                readonly></mdui-text-field>
+
+            <div class="row">
+                <mdui-text-field id="filingPrice" label="备案价" placeholder="自动计算" variant="outlined"
+                    readonly></mdui-text-field>
+                <mdui-text-field id="shopPrice" label="门店单价" type="number" placeholder="请输入价格" variant="outlined"
+                    onchange="calcPrice()"></mdui-text-field>
+            </div>
+
+            <div class="row">
+                <mdui-text-field id="actualPrice" label="实付单价" type="number" placeholder="自动计算" variant="outlined"
+                    readonly></mdui-text-field>
+                <mdui-text-field id="subsidyPrice" label="补贴价格" type="number" placeholder="自动计算" variant="outlined"
+                    readonly></mdui-text-field>
+            </div>
+        </mdui-card>
+
+    </div>
+
+    <mdui-fab class="fab-submit" icon="check" variant="primary" extended onclick="submitOrder()">
+        立即提交
+    </mdui-fab>
+
+    <script>
+        // --- 1. 基础配置 (区域数据库) ---
+        // 格式: City -> { District: Code }
+        const REGION_DB = {
+            "南京市": {
+                "玄武区": "320102", "秦淮区": "320104", "建邺区": "320105", "鼓楼区": "320106",
+                "浦口区": "320111", "栖霞区": "320113", "雨花台区": "320114", "江宁区": "320115",
+                "六合区": "320116", "溧水区": "320117", "高淳区": "320118"
+            },
+            "无锡市": {
+                "锡山区": "320205", "惠山区": "320206", "滨湖区": "320211", "梁溪区": "320213",
+                "新吴区": "320214", "江阴市": "320281", "宜兴市": "320282"
+            },
+            "徐州市": {
+                "鼓楼区": "320302", "云龙区": "320303", "贾汪区": "320305", "泉山区": "320311",
+                "铜山区": "320312", "丰县": "320321", "沛县": "320322", "睢宁县": "320324",
+                "新沂市": "320381", "邳州市": "320382"
+            },
+            "常州市": {
+                "天宁区": "320402", "钟楼区": "320404", "新北区": "320411", "武进区": "320412",
+                "金坛区": "320413", "溧阳市": "320481"
+            },
+            "苏州市": {
+                "虎丘区": "320505", "吴中区": "320506", "相城区": "320507", "姑苏区": "320508",
+                "吴江区": "320509", "常熟市": "320581", "张家港市": "320582", "昆山市": "320583",
+                "太仓市": "320585"
+            },
+            "南通市": {
+                "崇川区": "320602", "港闸区": "320611", "通州区": "320612", "海安县": "320621",
+                "如东县": "320623", "启东市": "320681", "如皋市": "320682", "海门市": "320684"
+            },
+            "连云港市": {
+                "连云区": "320703", "海州区": "320706", "赣榆区": "320707", "东海县": "320722",
+                "灌云县": "320723", "灌南县": "320724"
+            },
+            "淮安市": {
+                "淮安区": "320803", "淮阴区": "320804", "清江浦区": "320812", "洪泽区": "320813",
+                "涟水县": "320826", "盱眙县": "320830", "金湖县": "320831"
+            },
+            "盐城市": {
+                "亭湖区": "320902", "盐都区": "320903", "大丰区": "320904", "响水县": "320921",
+                "滨海县": "320922", "阜宁县": "320923", "射阳县": "320924", "建湖县": "320925",
+                "东台市": "320981"
+            },
+            "扬州市": {
+                "广陵区": "321002", "邗江区": "321003", "江都区": "321012", "宝应县": "321023",
+                "仪征市": "321081", "高邮市": "321084"
+            },
+            "镇江市": {
+                "京口区": "321102", "润州区": "321111", "丹徒区": "321112", "丹阳市": "321181",
+                "扬中市": "321182", "句容市": "321183"
+            },
+            "泰州市": {
+                "海陵区": "321202", "高港区": "321203", "姜堰区": "321204", "兴化市": "321281",
+                "靖江市": "321282", "泰兴市": "321283"
+            },
+            "宿迁市": {
+                "宿城区": "321302", "宿豫区": "321311", "沭阳县": "321322", "泗阳县": "321323",
+                "泗洪县": "321324"
+            }
+        };
+
+        // 动态生成下拉选项用的数据 (City -> Array of District Names)
+        const regionData = {};
+        for (const city in REGION_DB) {
+            regionData[city] = Object.keys(REGION_DB[city]);
+        }
+
+        const API_BASE = "https://www.longehuanxinjs.com/ccb_equity_api_new";
+
+        // **修改点：默认 Payload 清空**
+        const DEFAULT_PAYLOAD = "";
+
+        let loginPayload = DEFAULT_PAYLOAD;
+        let currentToken = "";
+        let orderToCancel = "";
+
+        const payStates = {
+            0: "待付款",
+            1: "支付中",
+            2: "已付款",
+            3: "支付失败",
+            4: "支付超时",
+            5: "未知状态",
+            6: "订单取消",
+        };
+
+        // DOM 引用
+        const citySelect = document.querySelector('#citySelect');
+        const districtSelect = document.querySelector('#districtSelect');
+        const errorDialog = document.querySelector('#errorDialog');
+        const errorContent = document.querySelector('#errorContent');
+        const configDialog = document.querySelector('#configDialog');
+        const configInput = document.querySelector('#configPayloadInput');
+        const displayShopName = document.querySelector('#displayShopName');
+        const tokenStatusBadge = document.querySelector('#tokenStatusBadge');
+        const confirmDialog = document.querySelector('#confirmDialog');
+        const confirmCancelBtn = document.querySelector('#confirmCancelBtn');
+        const shopOrderInput = document.querySelector('#shopOrderNumber');
+        const autoOrderCheckbox = document.querySelector('#autoOrderNumCheckbox');
+
+        // --- 2. 初始化 ---
+        window.addEventListener('load', () => {
+            // **修改点：如果本地没有配置，则直接弹出配置框，不尝试登录**
+            const hasConfig = loadConfig();
+            if (hasConfig) {
+                autoLogin();
+            } else {
+                openConfigDialog();
+                mdui.snackbar({ message: "请先配置 API Payload", placement: "top" });
+            }
+        });
+
+        // --- 3. 配置与存储逻辑 ---
+        function loadConfig() {
+            const stored = localStorage.getItem("APP_LOGIN_PAYLOAD");
+            if (stored) {
+                loginPayload = stored;
+                return true;
+            } else {
+                if (DEFAULT_PAYLOAD) {
+                    loginPayload = DEFAULT_PAYLOAD;
+                    return true;
+                }
+                return false; // 无配置
+            }
+        }
+
+        function openConfigDialog() {
+            configInput.value = loginPayload;
+            configDialog.open = true;
+        }
+
+        function closeConfigDialog() {
+            configDialog.open = false;
+        }
+
+        function saveConfig() {
+            const newVal = configInput.value.trim();
+            if (!newVal) {
+                mdui.snackbar({ message: "Payload 不能为空" });
+                return;
+            }
+            loginPayload = newVal;
+            localStorage.setItem("APP_LOGIN_PAYLOAD", newVal);
+            closeConfigDialog();
+            mdui.snackbar({ message: "配置已保存，正在连接..." });
+            autoLogin();
+        }
+
+        // --- 4. 自动单号逻辑 ---
+        function toggleOrderInput() {
+            if (autoOrderCheckbox.checked) {
+                shopOrderInput.value = "提交时自动生成";
+                shopOrderInput.disabled = true;
+            } else {
+                shopOrderInput.value = "";
+                shopOrderInput.disabled = false;
+            }
+        }
+
+        async function generateNextOrderNumber() {
+            const res = await callApi('/salesuser/getSalesPayAndRefundOrderList', 'GET', {
+                buyerMobile: "", // 获取所有，不筛选手机号
+                pageNumber: "1",
+                uploadFile3COrder: ""
+            });
+
+            if (res && res.code === 0 && res.data && res.data.shopOrders) {
+                const orders = res.data.shopOrders;
+                if (orders.length > 0) {
+                    const latest = orders[0];
+                    const lastNum = parseInt(latest.shopOrderNumber);
+                    if (!isNaN(lastNum)) {
+                        return (lastNum + 1).toString();
+                    }
+                }
+            }
+            return "1";
+        }
+
+
+        // --- 5. 订单列表 & 取消订单逻辑 ---
+        function openOrderDrawer() {
+            const drawer = document.getElementById('orderDrawer');
+            drawer.open = true;
+            const mobileInput = document.getElementById('orderSearchMobile');
+            fetchOrders(mobileInput.value);
+        }
+
+        function promptCancel(shopOrderNumber) {
+            orderToCancel = shopOrderNumber;
+            confirmDialog.open = true;
+        }
+
+        function closeConfirmDialog() {
+            confirmDialog.open = false;
+            orderToCancel = "";
+        }
+
+        confirmCancelBtn.addEventListener('click', async () => {
+            if (!orderToCancel) return;
+            confirmDialog.open = false;
+            const res = await callApi('/salesuser/cancelWxMiniOrder', 'POST', {
+                shopOrderNumber: orderToCancel
+            });
+            if (res && res.code === 0) {
+                mdui.snackbar({ message: "订单取消成功！", closeable: true });
+                fetchOrders();
+            } else {
+                showError(res ? res.msg : "取消失败");
+            }
+        });
+
+        async function fetchOrders(mobile = "") {
+            const container = document.getElementById('orderListContainer');
+            if (!currentToken) {
+                container.innerHTML = '<div style="grid-column: 1 / -1; padding: 20px; text-align: center; color: red;">请先获取 Token</div>';
+                return;
+            }
+
+            container.innerHTML = '<div style="grid-column: 1 / -1; padding: 50px; text-align: center;"><mdui-circular-progress></mdui-circular-progress></div>';
+            const searchMobile = document.getElementById('orderSearchMobile').value.trim();
+
+            const res = await callApi('/salesuser/getSalesPayAndRefundOrderList', 'GET', {
+                buyerMobile: searchMobile,
+                pageNumber: "1",
+                uploadFile3COrder: ""
+            });
+
+            if (res && res.code === 0 && res.data && res.data.shopOrders) {
+                const orders = res.data.shopOrders;
+                if (orders.length === 0) {
+                    container.innerHTML = '<div style="grid-column: 1 / -1; padding: 32px; text-align: center; color: #999;">未找到相关订单</div>';
+                    return;
+                }
+
+                let html = '';
+                orders.forEach(order => {
+                    const statusText = payStates[order.payState] || "未知";
+                    const statusClass = `status-${order.payState}`;
+
+                    let actionButton = '';
+                    if (order.payState === 0) {
+                        actionButton = `
+                            <div class="status-badge" 
+                                 style="background-color: transparent; border: 1px solid rgb(var(--mdui-color-error)); color: rgb(var(--mdui-color-error)); cursor: pointer;"
+                                 onclick="promptCancel('${order.shopOrderNumber}')">
+                                取消订单
+                            </div>`;
+                    }
+
+                    html += `
+                    <div class="order-card">
+                        <div class="card-header">
+                            <div>
+                                <div class="buyer-mobile">${order.buyerMobile}</div>
+                                <div class="buyer-name">${order.buyerName}</div>
+                            </div>
+                            <div style="display:flex; gap:8px;">
+                                <div class="status-badge ${statusClass}">${statusText}</div>
+                                ${actionButton}
+                            </div>
+                        </div>
+                        
+                        <div class="info-grid">
+                            <span class="label">销售单号:</span>
+                            <span class="value">${order.shopOrderNumber}</span>
+                            
+                            <span class="label">建行单号:</span>
+                            <span class="value">${order.ccbPayOrderNumber || '无'}</span>
+                            
+                            <span class="label">创建时间:</span>
+                            <span class="value">${order.createTime}</span>
+                        </div>
+
+                        <div class="card-footer">
+                            <span class="price-label">实付金额</span>
+                            <span class="price-value">¥${order.shopActualPayPrice}</span>
+                        </div>
+                    </div>
+                    `;
+                });
+                container.innerHTML = html;
+
+            } else {
+                container.innerHTML = `<div style="grid-column: 1 / -1; padding: 20px; text-align: center; color: red;">加载失败: ${res ? res.msg : '未知错误'}</div>`;
+            }
+        }
+
+        // --- 6. UI 辅助 ---
+        function populateSelect(selectElement, items, selectedValue = "") {
+            selectElement.innerHTML = '';
+            const defaultOpt = document.createElement('mdui-menu-item');
+            defaultOpt.value = "";
+            defaultOpt.innerText = "请选择";
+            selectElement.appendChild(defaultOpt);
+            items.forEach(itemText => {
+                const item = document.createElement('mdui-menu-item');
+                item.value = itemText;
+                item.innerText = itemText;
+                selectElement.appendChild(item);
+            });
+            selectElement.value = selectedValue;
+        }
+
+        populateSelect(citySelect, Object.keys(regionData));
+        citySelect.addEventListener('change', () => updateDistricts());
+
+        function updateDistricts(targetDist = "") {
+            const city = citySelect.value;
+            if (city && regionData[city]) {
+                populateSelect(districtSelect, regionData[city], targetDist);
+            } else {
+                populateSelect(districtSelect, []);
+            }
+        }
+
+        function showError(message) {
+            errorContent.innerText = message;
+            errorDialog.open = true;
+        }
+
+        function updateStatus(active, text = "") {
+            if (active) {
+                tokenStatusBadge.innerText = "已连接";
+                tokenStatusBadge.classList.add('active');
+            } else {
+                tokenStatusBadge.innerText = text || "未连接";
+                tokenStatusBadge.classList.remove('active');
+                displayShopName.innerText = "未获取门店信息";
+            }
+        }
+
+        // --- 7. API 核心 ---
+        async function callApi(endpoint, method = 'GET', data = null, customHeaders = {}) {
+            let headers = {
+                "Content-Type": "application/json",
+                ...customHeaders
+            };
+
+            if (currentToken) {
+                headers["token"] = currentToken;
+            }
+
+            let url = `${API_BASE}${endpoint}`;
+            const options = { method: method, headers: headers };
+
+            if (method === 'GET' && data) {
+                const params = new URLSearchParams(data).toString();
+                url += `?${params}`;
+            } else if (method === 'POST' && data) {
+                options.body = JSON.stringify(data);
+            }
+
+            try {
+                const response = await fetch(url, options);
+                return await response.json();
+            } catch (error) {
+                console.error("Network Error:", error);
+                showError("网络请求失败或跨域被拦截");
+                return null;
+            }
+        }
+
+        // --- 8. 业务逻辑 (初始化) ---
+        async function autoLogin() {
+            updateStatus(false, "正在连接...");
+            const res = await callApi('/miniUser/getToken', 'POST', loginPayload);
+
+            if (res && res.code === 0 && res.data) {
+                currentToken = res.data;
+                console.log("Token Refreshed");
+                checkTokenStatus();
+            } else {
+                updateStatus(false, "Token获取失败");
+                showError(`登录失败: ${res ? res.msg : '请检查网络或Payload配置'}`);
+            }
+        }
+
+        async function checkTokenStatus() {
+            const res = await callApi('/salesuser/getSalesActivity', 'GET');
+            if (res && res.code === 0 && res.data) {
+                updateStatus(true);
+                if (res.data.shopInfo?.shopName) {
+                    displayShopName.innerText = res.data.shopInfo.shopName;
+                }
+            } else {
+                updateStatus(false, "Token无效");
+                showError(`校验失败: ${res ? res.msg : '未知错误'}`);
+            }
+        }
+
+        async function checkQualification() {
+            const mobile = document.querySelector('#buyerMobile').value;
+            if (!mobile) return showError("请输入手机号");
+            if (!currentToken) return showError("系统未就绪，请刷新");
+
+            const res = await callApi('/salesuser/queryCustomerChannelSubsidyBalance', 'GET', { buyerMobile: mobile });
+            const chips = document.querySelectorAll('#productCategoryChips mdui-chip');
+
+            if (res && res.code === 0) {
+                const codesStr = res.data.countrySubsidyCateCodes || "";
+                const validCodes = codesStr.split(',').map(c => c.trim());
+
+                mdui.snackbar({ message: `查询成功: ${codesStr}`, closeable: true });
+
+                chips.forEach(chip => {
+                    if (validCodes.includes(chip.value)) {
+                        chip.selected = true;
+                    } else {
+                        chip.selected = false;
+                    }
+                });
+            } else {
+                showError(res ? res.msg : "查询无响应");
+                chips.forEach(c => { c.selected = false; c.variant = "filter"; });
+            }
+        }
+
+        async function queryGoodsInfo() {
+            const goodsCode = document.querySelector('#goodsCode').value;
+            if (!goodsCode) return;
+            if (!currentToken) return showError("Token 未就绪");
+
+            const res = await callApi('/salesuser/queryGoodsInfo', 'GET', { goodsCode: goodsCode, uniscid: "" });
+
+            if (res && res.code === 0 && res.data) {
+                document.querySelector('#goodsName').value = res.data.goodsName;
+                document.querySelector('#filingPrice').value = res.data.subsidyBackPrice;
+                calcPrice();
+            } else {
+                showError(`商品查询失败: ${res ? res.msg : '未知'}`);
+                document.querySelector('#goodsName').value = "";
+            }
+        }
+
+        async function calcPrice() {
+            const shopPrice = document.querySelector('#shopPrice').value;
+            const goodsCode = document.querySelector('#goodsCode').value;
+            if (!shopPrice || !goodsCode) return;
+
+            const res = await callApi('/salesuser/calShopGoodsPrice', 'GET', {
+                shopPrice: shopPrice,
+                goodsCode: goodsCode,
+                goodsCount: "1",
+                uniscid: ""
+            });
+
+            if (res && res.code === 0 && res.data) {
+                document.querySelector('#actualPrice').value = res.data.payPrice;
+                document.querySelector('#subsidyPrice').value = res.data.subsidyAmount;
+            } else {
+                showError(res ? res.msg : "计算失败");
+            }
+        }
+
+        async function submitOrder() {
+            if (!currentToken) return showError("Token 未就绪");
+
+            const mobile = document.querySelector('#buyerMobile').value;
+            let shopOrderNumber = document.querySelector('#shopOrderNumber').value;
+
+            // 自动单号逻辑
+            if (autoOrderCheckbox.checked) {
+                try {
+                    mdui.snackbar({ message: "正在获取最新单号..." });
+                    shopOrderNumber = await generateNextOrderNumber();
+                    console.log("Auto generated order number:", shopOrderNumber);
+                } catch (e) {
+                    return showError("自动获取单号失败，请手动输入");
+                }
+            }
+
+            const goodsCode = document.querySelector('#goodsCode').value;
+            const goodsName = document.querySelector('#goodsName').value;
+            const shopPrice = document.querySelector('#shopPrice').value;
+            const actualPrice = document.querySelector('#actualPrice').value;
+            const subsidyPrice = document.querySelector('#subsidyPrice').value;
+            const detailAddr = document.querySelector('#detailAddress').value;
+            const city = citySelect.value;
+            const district = districtSelect.value;
+
+            if (!mobile || !shopOrderNumber || !goodsCode || !shopPrice || !city || !district) {
+                return showError("请填写完整订单信息");
+            }
+
+            // 精准匹配代码
+            let addCode = "";
+            if (REGION_DB[city] && REGION_DB[city][district]) {
+                addCode = REGION_DB[city][district];
+            }
+
+            if (!addCode) {
+                return showError(`未找到该区域代码: ${city}-${district}`);
+            }
+
+            const fullAddress = `江苏省-${city}-${district} ${detailAddr}`;
+
+            const payload = {
+                "shopOrderNumber": shopOrderNumber,
+                "buyerMobile": mobile,
+                "shopActualPayPrice": parseFloat(actualPrice || 0).toFixed(2),
+                "shopOriginalPrice": parseFloat(shopPrice).toFixed(2),
+                "subsidyTotalAmount": parseFloat(subsidyPrice || 0).toFixed(2),
+                "goodsVoList": [{
+                    "goodsCode": goodsCode,
+                    "goodsName": goodsName,
+                    "goodsCount": 1,
+                    "shopGoodsActualPayPrice": parseFloat(actualPrice || 0),
+                    "shopGoodsOriginalPrice": parseFloat(shopPrice),
+                    "subsidyAmount": parseFloat(subsidyPrice || 0),
+                    "uniscid": ""
+                }],
+                "addCode": addCode,
+                "uniscid": "",
+                "address": fullAddress
+            };
+
+            const res = await callApi('/salesuser/addOrder', 'POST', payload);
+
+            if (res && res.code === 0) {
+                mdui.snackbar({ message: "订单提交成功！", closeable: true });
+            } else {
+                showError(res ? res.msg : "提交失败");
+            }
+        }
+
+        function smartParse() {
+            let text = document.querySelector('#smartInput').value.trim();
+            if (!text) {
+                mdui.snackbar({ message: "请先输入文本" });
+                return;
+            }
+            const phoneMatch = text.match(/1[3-9]\d{9}/);
+            if (phoneMatch) document.querySelector('#buyerMobile').value = phoneMatch[0];
+
+            let foundCity = "", foundDist = "";
+            for (let city in regionData) {
+                for (let dist of regionData[city]) {
+                    const shortDist = dist.replace(/[区市县]$/, '');
+                    if (text.includes(dist) || (shortDist.length >= 2 && text.includes(shortDist))) {
+                        foundCity = city;
+                        foundDist = dist;
+                        break;
+                    }
+                }
+                if (foundCity) break;
+            }
+
+            if (foundCity) {
+                citySelect.value = foundCity;
+                updateDistricts(foundDist);
+            }
+
+            const parts = text.split(/[\s,，。;；\n、]+/).filter(p => p.length > 0);
+            const addressKeywords = ["路", "号", "栋", "单元", "室", "区", "市", "县", "镇", "对接", "交底", "脱"];
+            let name = "";
+            parts.forEach(p => {
+                const cleanP = p.replace(/1[3-9]\d{9}/, '');
+                if (cleanP.length >= 2 && cleanP.length <= 4 && !addressKeywords.some(k => cleanP.includes(k)) && /^[\u4e00-\u9fa5]+$/.test(cleanP)) {
+                    name = cleanP;
+                }
+            });
+            if (name) document.querySelector('#buyerName').value = name;
+
+            let detailAddr = "";
+            parts.forEach(p => {
+                if (p.length > detailAddr.length && !p.match(/^1[3-9]\d{9}$/) && p !== name) {
+                    detailAddr = p;
+                }
+            });
+            if (foundDist) {
+                const cleanDist = foundDist.replace(/[区市县]$/, '');
+                detailAddr = detailAddr.replace(new RegExp(`.*${cleanDist}[区市县]?`), '');
+            }
+            document.querySelector('#detailAddress').value = detailAddr.trim();
+        }
+
+    </script>
+</body>
+
+</html>
