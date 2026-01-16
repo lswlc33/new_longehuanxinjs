@@ -24,6 +24,7 @@
             margin: 0;
         }
 
+
         /* --- 顶部状态栏 --- */
         .status-bar {
             position: fixed;
@@ -187,16 +188,23 @@
             justify-content: space-between;
             background-color: rgb(var(--mdui-color-surface));
             border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            /* box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05); */
             z-index: 10;
         }
 
         .drawer-search {
-            padding: 16px 24px;
+            padding: 16px 24px 8px 24px;
             display: flex;
             gap: 12px;
             background-color: rgb(var(--mdui-color-surface));
-            margin-bottom: 1px;
+        }
+
+        .drawer-filter {
+            padding: 0 24px 16px 24px;
+            background-color: rgb(var(--mdui-color-surface));
+            border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+            display: flex;
+            overflow-x: auto;
         }
 
         .order-list {
@@ -333,6 +341,57 @@
             font-weight: 700;
             color: rgb(var(--mdui-color-primary));
         }
+
+        /* --- 详情弹窗 Grid 样式 --- */
+        .detail-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 16px;
+            padding: 8px 0;
+        }
+
+        @media (min-width: 600px) {
+            .detail-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .detail-full-width {
+                grid-column: 1 / -1;
+            }
+        }
+
+        .detail-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .detail-label {
+            font-size: 12px;
+            color: rgb(var(--mdui-color-outline));
+        }
+
+        .detail-value {
+            font-size: 15px;
+            color: rgb(var(--mdui-color-on-surface));
+            word-break: break-all;
+            font-weight: 500;
+        }
+
+        .detail-divider {
+            grid-column: 1 / -1;
+            height: 1px;
+            background-color: rgba(0, 0, 0, 0.1);
+            margin: 8px 0;
+        }
+
+        .section-sub-title {
+            grid-column: 1 / -1;
+            font-size: 14px;
+            color: rgb(var(--mdui-color-primary));
+            font-weight: bold;
+            margin-top: 8px;
+        }
     </style>
 </head>
 
@@ -368,6 +427,15 @@
                 <mdui-button variant="filled" onclick="fetchOrders()">搜索</mdui-button>
             </div>
 
+            <div class="drawer-filter">
+                <mdui-segmented-button-group selects="single" id="orderFilterGroup" style="width: 100%;">
+                    <mdui-segmented-button value="2">已付款</mdui-segmented-button>
+                    <mdui-segmented-button value="1">支付中</mdui-segmented-button>
+                    <mdui-segmented-button value="0">未支付</mdui-segmented-button>
+                    <mdui-segmented-button value="4">已超时</mdui-segmented-button>
+                </mdui-segmented-button-group>
+            </div>
+
             <div id="orderListContainer" class="order-list">
                 <div
                     style="grid-column: 1 / -1; text-align: center; padding-top: 100px; color: #999; display: flex; flex-direction: column; align-items: center; gap: 10px;">
@@ -377,6 +445,19 @@
             </div>
         </div>
     </mdui-navigation-drawer>
+
+    <mdui-dialog id="detailDialog" close-on-overlay-click>
+        <span slot="headline" id="detailDialogTitle">订单详情</span>
+        <div slot="description" style="overflow-y: auto;">
+            <div id="detailLoading" style="text-align: center; padding: 20px;">
+                <mdui-circular-progress></mdui-circular-progress>
+            </div>
+            <div id="detailContent" class="detail-grid" style="display: none;">
+            </div>
+        </div>
+        <mdui-button slot="action" variant="filled"
+            onclick="document.querySelector('#detailDialog').open = false">关闭</mdui-button>
+    </mdui-dialog>
 
     <mdui-dialog id="configDialog" close-on-overlay-click>
         <span slot="headline">API 配置</span>
@@ -562,8 +643,6 @@
         }
 
         const API_BASE = "https://www.longehuanxinjs.com/ccb_equity_api_new";
-
-        // **修改点：默认 Payload 清空**
         const DEFAULT_PAYLOAD = "";
 
         let loginPayload = DEFAULT_PAYLOAD;
@@ -593,10 +672,11 @@
         const confirmCancelBtn = document.querySelector('#confirmCancelBtn');
         const shopOrderInput = document.querySelector('#shopOrderNumber');
         const autoOrderCheckbox = document.querySelector('#autoOrderNumCheckbox');
+        const detailDialog = document.querySelector('#detailDialog');
+        const orderFilterGroup = document.querySelector('#orderFilterGroup');
 
         // --- 2. 初始化 ---
         window.addEventListener('load', () => {
-            // **修改点：如果本地没有配置，则直接弹出配置框，不尝试登录**
             const hasConfig = loadConfig();
             if (hasConfig) {
                 autoLogin();
@@ -604,6 +684,11 @@
                 openConfigDialog();
                 mdui.snackbar({ message: "请先配置 API Payload", placement: "top" });
             }
+        });
+
+        // 监听筛选切换事件
+        orderFilterGroup.addEventListener('change', () => {
+            fetchOrders();
         });
 
         // --- 3. 配置与存储逻辑 ---
@@ -675,7 +760,7 @@
         }
 
 
-        // --- 5. 订单列表 & 取消订单逻辑 ---
+        // --- 5. 订单列表 & 详情 & 取消逻辑 ---
         function openOrderDrawer() {
             const drawer = document.getElementById('orderDrawer');
             drawer.open = true;
@@ -683,6 +768,7 @@
             fetchOrders(mobileInput.value);
         }
 
+        // 取消订单逻辑
         function promptCancel(shopOrderNumber) {
             orderToCancel = shopOrderNumber;
             confirmDialog.open = true;
@@ -707,8 +793,11 @@
             }
         });
 
+        // 订单列表逻辑
         async function fetchOrders(mobile = "") {
             const container = document.getElementById('orderListContainer');
+            const currentFilter = orderFilterGroup.value; // 获取当前筛选值
+
             if (!currentToken) {
                 container.innerHTML = '<div style="grid-column: 1 / -1; padding: 20px; text-align: center; color: red;">请先获取 Token</div>';
                 return;
@@ -724,7 +813,16 @@
             });
 
             if (res && res.code === 0 && res.data && res.data.shopOrders) {
-                const orders = res.data.shopOrders;
+                let orders = res.data.shopOrders;
+
+                // --- 前端筛选逻辑 ---
+                // 只有当选择了具体的筛选条件（currentFilter 有值）时才进行过滤
+                // 如果是空字符串或 undefined（即未选择），则显示全部
+                if (currentFilter) {
+                    const filterVal = parseInt(currentFilter);
+                    orders = orders.filter(order => order.payState === filterVal);
+                }
+
                 if (orders.length === 0) {
                     container.innerHTML = '<div style="grid-column: 1 / -1; padding: 32px; text-align: center; color: #999;">未找到相关订单</div>';
                     return;
@@ -735,29 +833,36 @@
                     const statusText = payStates[order.payState] || "未知";
                     const statusClass = `status-${order.payState}`;
 
+                    // 取消按钮 (仅在待付款状态显示)
                     let actionButton = '';
                     if (order.payState === 0) {
                         actionButton = `
-                            <div class="status-badge" 
-                                 style="background-color: transparent; border: 1px solid rgb(var(--mdui-color-error)); color: rgb(var(--mdui-color-error)); cursor: pointer;"
-                                 onclick="promptCancel('${order.shopOrderNumber}')">
-                                取消订单
-                            </div>`;
+                            <mdui-button variant="text" style="color: rgb(var(--mdui-color-error)); min-width: auto; padding: 0 8px; height: 28px;" 
+                                onclick="event.stopPropagation(); promptCancel('${order.shopOrderNumber}')">
+                                取消
+                            </mdui-button>`;
                     }
 
+                    // 详情按钮
+                    const detailBtn = `
+                        <mdui-button-icon icon="info" variant="standard"
+                             onclick="event.stopPropagation(); viewOrderDetail('${order.ccbPayOrderNumber}')" tooltip="查看详情"></mdui-button-icon>
+                    `;
+
                     html += `
-                    <div class="order-card">
+                    <div class="order-card" onclick="viewOrderDetail('${order.ccbPayOrderNumber}')" style="cursor: pointer;">
                         <div class="card-header">
                             <div>
                                 <div class="buyer-mobile">${order.buyerMobile}</div>
                                 <div class="buyer-name">${order.buyerName}</div>
                             </div>
-                            <div style="display:flex; gap:8px;">
+                            <div style="display:flex; align-items: center; gap:4px;">
                                 <div class="status-badge ${statusClass}">${statusText}</div>
                                 ${actionButton}
+                                ${detailBtn}
                             </div>
                         </div>
-                        
+                          
                         <div class="info-grid">
                             <span class="label">销售单号:</span>
                             <span class="value">${order.shopOrderNumber}</span>
@@ -783,6 +888,71 @@
             }
         }
 
+        // --- 查看详情逻辑 ---
+        async function viewOrderDetail(orderNumber) {
+            if (!orderNumber) {
+                mdui.snackbar({ message: "订单号无效" });
+                return;
+            }
+
+            // 打开弹窗并显示加载状态
+            detailDialog.open = true;
+            document.getElementById('detailLoading').style.display = 'block';
+            document.getElementById('detailContent').style.display = 'none';
+
+            // 调用详情 API
+            const res = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber: orderNumber });
+
+            document.getElementById('detailLoading').style.display = 'none';
+            const contentDiv = document.getElementById('detailContent');
+
+            if (res && res.code === 0 && res.data && res.data.payOrder) {
+                const order = res.data.payOrder;
+                const product = (order.goodsOrderList && order.goodsOrderList.length > 0) ? order.goodsOrderList[0] : {};
+
+                // 辅助函数：生成详情项 HTML
+                const itemHtml = (label, value, fullWidth = false) => `
+                    <div class="detail-item ${fullWidth ? 'detail-full-width' : ''}">
+                        <span class="detail-label">${label}</span>
+                        <span class="detail-value">${value || '-'}</span>
+                    </div>
+                `;
+
+                contentDiv.innerHTML = `
+                    <div class="section-sub-title">基本信息</div>
+                    ${itemHtml('买家姓名', order.buyerName)}
+                    ${itemHtml('手机号码', order.buyerMobile)}
+                    ${itemHtml('订单状态', payStates[order.payState])}
+                    ${itemHtml('支付时间', order.payTime || '未支付')}
+                    
+                    <div class="detail-divider"></div>
+                    <div class="section-sub-title">单号信息</div>
+                    ${itemHtml('门店销售单号', order.shopOrderNumber)}
+                    ${itemHtml('门店编号', order.shopCode)}
+                    ${itemHtml('建行交易单号', order.ccbPayOrderNumber, true)}
+                    
+                    <div class="detail-divider"></div>
+                    <div class="section-sub-title">商品与地址</div>
+                    ${itemHtml('品牌', product.brand)}
+                    ${itemHtml('商品分类', product.goodsType)}
+                    ${itemHtml('商品名称', product.goodsName, true)}
+                    ${itemHtml('商品型号', product.goodsModel, true)}
+                    ${itemHtml('收货地址', order.address, true)}
+                    
+                    <div class="detail-divider"></div>
+                    <div class="section-sub-title">金额明细</div>
+                    ${itemHtml('开单原价', `¥${order.shopOriginalPrice}`)}
+                    ${itemHtml('政府补贴', `¥${order.subsidyTotalAmount}`)}
+                    ${itemHtml('实付金额', `¥${order.shopActualPayPrice}`, true)}
+                `;
+
+                contentDiv.style.display = 'grid'; // 重新显示 grid
+            } else {
+                contentDiv.style.display = 'block';
+                contentDiv.innerHTML = `<div style="text-align:center; color:red; padding:20px;">获取详情失败: ${res ? res.msg : '未知错误'}</div>`;
+            }
+        }
+
         // --- 6. UI 辅助 ---
         function populateSelect(selectElement, items, selectedValue = "") {
             selectElement.innerHTML = '';
@@ -802,8 +972,8 @@
         populateSelect(citySelect, Object.keys(regionData));
         citySelect.addEventListener('change', () => updateDistricts());
 
-        function updateDistricts(targetDist = "") {
-            const city = citySelect.value;
+        function updateDistricts(targetDist = "", forceCity = "") {
+            const city = forceCity || citySelect.value;
             if (city && regionData[city]) {
                 populateSelect(districtSelect, regionData[city], targetDist);
             } else {
@@ -858,7 +1028,7 @@
             }
         }
 
-        // --- 8. 业务逻辑 (初始化) ---
+        // --- 8. 业务逻辑 (自动登录与查询) ---
         async function autoLogin() {
             updateStatus(false, "正在连接...");
             const res = await callApi('/miniUser/getToken', 'POST', loginPayload);
@@ -1022,56 +1192,88 @@
         }
 
         function smartParse() {
-            let text = document.querySelector('#smartInput').value.trim();
-            if (!text) {
+            let originalText = document.querySelector('#smartInput').value;
+            if (!originalText.trim()) {
                 mdui.snackbar({ message: "请先输入文本" });
                 return;
             }
-            const phoneMatch = text.match(/1[3-9]\d{9}/);
-            if (phoneMatch) document.querySelector('#buyerMobile').value = phoneMatch[0];
 
+            // 1. --- 提取手机号 ---
+            let mobile = "";
+            const phoneMatch = originalText.match(/1[3-9]\d{9}/);
+            if (phoneMatch) {
+                mobile = phoneMatch[0];
+                document.querySelector('#buyerMobile').value = mobile;
+                checkQualification()
+            }
+
+            // 2. --- 提取城市和区县 ---
+            let textForRegion = originalText;
             let foundCity = "", foundDist = "";
+
+            outerLoop:
             for (let city in regionData) {
                 for (let dist of regionData[city]) {
                     const shortDist = dist.replace(/[区市县]$/, '');
-                    if (text.includes(dist) || (shortDist.length >= 2 && text.includes(shortDist))) {
+                    if (textForRegion.includes(dist) || (shortDist.length >= 2 && textForRegion.includes(shortDist))) {
                         foundCity = city;
                         foundDist = dist;
-                        break;
+                        break outerLoop;
                     }
                 }
-                if (foundCity) break;
             }
 
+            // 设置下拉框联动
             if (foundCity) {
                 citySelect.value = foundCity;
-                updateDistricts(foundDist);
+                updateDistricts(foundDist, foundCity);
+                if (foundDist) {
+                    setTimeout(() => {
+                        districtSelect.value = foundDist;
+                    }, 50);
+                }
             }
 
-            const parts = text.split(/[\s,，。;；\n、]+/).filter(p => p.length > 0);
-            const addressKeywords = ["路", "号", "栋", "单元", "室", "区", "市", "县", "镇", "对接", "交底", "脱"];
-            let name = "";
-            parts.forEach(p => {
-                const cleanP = p.replace(/1[3-9]\d{9}/, '');
-                if (cleanP.length >= 2 && cleanP.length <= 4 && !addressKeywords.some(k => cleanP.includes(k)) && /^[\u4e00-\u9fa5]+$/.test(cleanP)) {
-                    name = cleanP;
-                }
-            });
-            if (name) document.querySelector('#buyerName').value = name;
+            // 3. --- 提取姓名 ---
+            let textForName = originalText.replace(mobile, " ");
+            const parts = textForName.split(/[\s,，。;；\n、]+/).filter(p => p.trim().length > 0);
 
-            let detailAddr = "";
-            parts.forEach(p => {
-                if (p.length > detailAddr.length && !p.match(/^1[3-9]\d{9}$/) && p !== name) {
-                    detailAddr = p;
+            let name = "";
+            const addressKeywords = ["路", "号", "栋", "单元", "室", "区", "市", "县", "镇", "省", "苑", "园", "村", "街道", "弄", "组", "排"];
+
+            for (let p of parts) {
+                if (p.length >= 2 && p.length <= 4 &&
+                    !addressKeywords.some(k => p.includes(k)) &&
+                    /^[\u4e00-\u9fa5]+$/.test(p)) {
+                    name = p;
+                    break;
                 }
-            });
+            }
+
+            if (name) {
+                document.querySelector('#buyerName').value = name;
+            }
+
+            // 4. --- 提取详细地址 ---
+            let addressStr = originalText;
+            if (mobile) addressStr = addressStr.replace(mobile, " ");
+            if (name) addressStr = addressStr.replace(name, " ");
+
+            addressStr = addressStr.replace(/[,，。;；\n、]/g, " ");
+            addressStr = addressStr.replace(/\s+/g, " ").trim();
+
             if (foundDist) {
                 const cleanDist = foundDist.replace(/[区市县]$/, '');
-                detailAddr = detailAddr.replace(new RegExp(`.*${cleanDist}[区市县]?`), '');
+                const regex = new RegExp(`^.*?${cleanDist}[区市县]?`);
+                addressStr = addressStr.replace(regex, "").trim();
+            } else if (foundCity) {
+                const cleanCity = foundCity.replace(/[市]$/, '');
+                addressStr = addressStr.replace(new RegExp(`^.*?${cleanCity}[市]?`), "").trim();
             }
-            document.querySelector('#detailAddress').value = detailAddr.trim();
-        }
 
+            addressStr = addressStr.replace(/^[\s,，-]+/, "").trim();
+            document.querySelector('#detailAddress').value = addressStr;
+        }
     </script>
 </body>
 
