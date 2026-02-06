@@ -373,6 +373,17 @@
             font-weight: bold;
             margin-top: 8px;
         }
+
+        /* 二维码图片 */
+        .qr-image {
+            width: 100%;
+            max-width: 240px;
+            height: auto;
+            border-radius: 8px;
+            border: 1px solid #eee;
+            margin: 10px auto;
+            display: block;
+        }
     </style>
 </head>
 
@@ -409,9 +420,9 @@
 
             <div class="drawer-filter">
                 <mdui-segmented-button-group selects="single" id="orderFilterGroup" style="width: 100%;">
-                    <mdui-segmented-button value="2">已付款</mdui-segmented-button>
-                    <mdui-segmented-button value="1">支付中</mdui-segmented-button>
                     <mdui-segmented-button value="0">未支付</mdui-segmented-button>
+                    <mdui-segmented-button value="2">已付款</mdui-segmented-button>
+                    <mdui-segmented-button value="5">已退款</mdui-segmented-button>
                     <mdui-segmented-button value="4">已超时</mdui-segmented-button>
                 </mdui-segmented-button-group>
             </div>
@@ -434,6 +445,19 @@
             </div>
             <div id="detailContent" class="detail-grid" style="display: none;"></div>
         </div>
+    </mdui-dialog>
+
+    <mdui-dialog id="qrDialog" close-on-overlay-click>
+        <span slot="headline">扫码支付</span>
+        <div slot="description" style="text-align: center;">
+            <p style="font-size: 14px; color: #666;">请使用建行生活、支付宝或微信扫一扫</p>
+            <div id="qrLoading" style="padding: 20px;"><mdui-circular-progress></mdui-circular-progress></div>
+            <img id="qrImage" class="qr-image" style="display: none;" alt="支付二维码" onclick="copyQrImage()">
+            <div style="font-size: 12px; color: #999; margin-top: 8px;">点击二维码可复制</div>
+        </div>
+        <mdui-button slot="action" variant="text"
+            onclick="document.getElementById('qrDialog').open = false">关闭</mdui-button>
+        <mdui-button slot="action" variant="tonal" icon="refresh" onclick="refreshQrCode()">刷新</mdui-button>
     </mdui-dialog>
 
     <mdui-dialog id="configDialog" close-on-overlay-click>
@@ -460,6 +484,14 @@
         <mdui-button slot="action" variant="text" onclick="closeConfirmDialog()">暂不取消</mdui-button>
         <mdui-button slot="action" variant="filled" id="confirmCancelBtn"
             style="background-color: rgb(var(--mdui-color-error)); color: white;">确认取消</mdui-button>
+    </mdui-dialog>
+
+    <mdui-dialog id="refundConfirmDialog" close-on-overlay-click>
+        <span slot="headline">退款确认</span>
+        <div slot="description">您确定要对该订单发起退款吗？此操作将执行全额退款。</div>
+        <mdui-button slot="action" variant="text" onclick="closeRefundDialog()">暂不退款</mdui-button>
+        <mdui-button slot="action" variant="filled" id="confirmRefundBtn"
+            style="background-color: rgb(var(--mdui-color-error)); color: white;">确认退款</mdui-button>
     </mdui-dialog>
 
     <div class="container">
@@ -498,7 +530,7 @@
                 <span class="section-title">门店订单信息</span>
                 <mdui-checkbox id="autoOrderNumCheckbox" onchange="toggleOrderInput()" checked>自动单号</mdui-checkbox>
             </div>
-            <mdui-text-field id="shopOrderNumber" label="销售单号" placeholder="请输入订单号" disabled value="提交时自动生成"
+            <mdui-text-field id="shopOrderNumber" label="销售单号" placeholder="请输入订单号" disabled value="提交时自动生成（上一单单号 +1）"
                 variant="outlined"></mdui-text-field>
             <div class="row">
                 <mdui-select id="citySelect" label="城市" variant="outlined"></mdui-select>
@@ -549,12 +581,14 @@
 
         const payStates = {
             0: "待付款", 1: "支付中", 2: "已付款",
-            3: "支付失败", 4: "支付超时", 5: "未知状态", 6: "订单取消"
+            3: "支付失败", 4: "支付超时", 5: "已退款", 6: "订单取消"
         };
 
         let loginPayload = DEFAULT_PAYLOAD;
         let currentToken = "";
         let orderToCancel = "";
+        let orderToRefund = "";
+        let currentQrOrderNumber = "";
         let regionTree = {}; // 动态区域数据树
 
         // DOM 元素引用
@@ -569,7 +603,11 @@
             errorDialog: document.querySelector('#errorDialog'),
             errorContent: document.querySelector('#errorContent'),
             detailDialog: document.querySelector('#detailDialog'),
-            confirmDialog: document.querySelector('#confirmDialog')
+            confirmDialog: document.querySelector('#confirmDialog'),
+            refundDialog: document.querySelector('#refundConfirmDialog'),
+            qrDialog: document.querySelector('#qrDialog'),
+            qrImage: document.querySelector('#qrImage'),
+            qrLoading: document.querySelector('#qrLoading')
         };
 
         // --- 初始化 ---
@@ -795,7 +833,18 @@
 
             if (res?.code === 0 && res.data?.shopOrders) {
                 let orders = res.data.shopOrders;
-                if (filterVal) orders = orders.filter(o => o.payState === parseInt(filterVal));
+
+                // 筛选逻辑修改：
+                // 如果筛选值存在
+                if (filterVal) {
+                    if (filterVal === "0") {
+                        // "未支付" 分组包含 0 (待付款) 和 1 (支付中)
+                        orders = orders.filter(o => o.payState === 0 || o.payState === 1);
+                    } else {
+                        // 其他状态精确匹配 (如 2:已付款, 5:已退款, 4:超时)
+                        orders = orders.filter(o => o.payState === parseInt(filterVal));
+                    }
+                }
 
                 if (!orders.length) {
                     container.innerHTML = '<div style="padding: 32px; text-align: center; color: #999;">未找到相关订单</div>';
@@ -804,6 +853,26 @@
 
                 container.innerHTML = orders.map(order => {
                     const statusText = payStates[order.payState] || "未知";
+
+                    // 构建卡片底部：如果是未支付或支付中，显示去支付按钮
+                    let footerContent = '';
+                    if (order.payState === 0 || order.payState === 1) {
+                        footerContent = `
+
+                                <mdui-button icon="qr_code_2" variant="tonal" 
+                                    onclick="event.stopPropagation(); openQrDialog('${order.ccbPayOrderNumber}')">
+                                    去支付
+                                </mdui-button>
+                                <span class="price-value">¥${order.shopActualPayPrice}</span>
+
+                         `;
+                    } else {
+                        footerContent = `
+                            <span class="price-label">实付金额</span>
+                            <span class="price-value">¥${order.shopActualPayPrice}</span>
+                         `;
+                    }
+
                     return `
                     <div class="order-card" onclick="viewOrderDetail('${order.ccbPayOrderNumber}')">
                         <div class="card-header">
@@ -822,8 +891,7 @@
                             <span class="label">创建时间:</span><span class="value">${order.createTime}</span>
                         </div>
                         <div class="card-footer">
-                            <span class="price-label">实付金额</span>
-                            <span class="price-value">¥${order.shopActualPayPrice}</span>
+                            ${footerContent}
                         </div>
                     </div>`;
                 }).join('');
@@ -865,9 +933,12 @@
                 const order = res.data.payOrder;
                 const product = order.goodsOrderList?.[0] || {};
 
-                // 如果是待付款，调整按钮：取消在左，关闭在右
-                if (order.payState === 0) {
-                    dialog.querySelectorAll('[slot="action"]').forEach(el => el.remove()); // 清除之前的关闭按钮
+                // 按钮逻辑
+                // 清除之前的按钮重新添加，确保顺序
+                dialog.querySelectorAll('[slot="action"]').forEach(el => el.remove());
+
+                // 待付款 (0) -> 取消订单
+                if (order.payState === 0 || order.payState === 1) {
                     addBtn("取消订单", () => {
                         dialog.open = false;
                         setTimeout(() => {
@@ -875,8 +946,20 @@
                             els.confirmDialog.open = true;
                         }, 200);
                     }, "rgb(var(--mdui-color-error))");
-                    addBtn("关闭", () => dialog.open = false);
                 }
+
+                // 已付款 (2) -> 退款
+                if (order.payState === 2) {
+                    addBtn("退款", () => {
+                        dialog.open = false;
+                        setTimeout(() => {
+                            orderToRefund = order.ccbPayOrderNumber;
+                            els.refundDialog.open = true;
+                        }, 200);
+                    }, "rgb(var(--mdui-color-error))");
+                }
+
+                addBtn("关闭", () => dialog.open = false);
 
                 const itemHtml = (l, v, full = false) => `<div class="detail-item ${full ? 'detail-full-width' : ''}"><span class="detail-label">${l}</span><span class="detail-value">${v || '-'}</span></div>`;
 
@@ -921,6 +1004,82 @@
 
         function closeConfirmDialog() { els.confirmDialog.open = false; orderToCancel = ""; }
 
+        // --- 业务逻辑：退款流程 ---
+        document.getElementById('confirmRefundBtn').addEventListener('click', async () => {
+            if (!orderToRefund) return;
+            els.refundDialog.open = false;
+
+            const payload = {
+                "shopRefundOrderNumber": "",
+                "ccbPayOrderNumber": orderToRefund,
+                "goodsList": []
+            };
+
+            const res = await callApi('/salesuser/auditRefundOrder', 'POST', payload);
+
+            if (res?.code === 0) {
+                mdui.snackbar({ message: "退款成功", placement: "top" });
+                fetchOrders(); // 刷新列表查看状态变化
+            } else {
+                showError(res?.msg || "退款请求失败");
+            }
+            orderToRefund = "";
+        });
+
+        function closeRefundDialog() { els.refundDialog.open = false; orderToRefund = ""; }
+
+        // --- 业务逻辑：二维码支付 ---
+        function openQrDialog(ccbOrderNum) {
+            if (!ccbOrderNum) return mdui.snackbar({ message: "无效的订单号" });
+            currentQrOrderNumber = ccbOrderNum;
+            els.qrDialog.open = true;
+            loadQrCode();
+        }
+
+        function refreshQrCode() {
+            if (currentQrOrderNumber) loadQrCode();
+        }
+
+        async function loadQrCode() {
+            els.qrLoading.style.display = 'block';
+            els.qrImage.style.display = 'none';
+            els.qrImage.src = '';
+
+            const res = await callApi('/salesuser/getCcbTogetherPayQrCd', 'POST', {
+                ccbPayOrderNumber: currentQrOrderNumber
+            });
+
+            els.qrLoading.style.display = 'none';
+
+            if (res?.code === 0 && res.data?.paymentQrCode) {
+                // 处理 base64 图片前缀
+                const base64Str = res.data.paymentQrCode;
+                const src = base64Str.startsWith('data:') ? base64Str : `data:image/png;base64,${base64Str}`;
+                els.qrImage.src = src;
+                els.qrImage.style.display = 'block';
+            } else {
+                mdui.snackbar({ message: res?.msg || "获取二维码失败" });
+            }
+        }
+
+        async function copyQrImage() {
+            const src = els.qrImage.src;
+            if (!src || els.qrImage.style.display === 'none') return mdui.snackbar({ message: "二维码未加载" });
+
+            try {
+                const response = await fetch(src);
+                const blob = await response.blob();
+                await navigator.clipboard.write([
+                    new ClipboardItem({ [blob.type]: blob })
+                ]);
+                mdui.snackbar({ message: "二维码图片已复制" });
+            } catch (err) {
+                console.error(err);
+                mdui.snackbar({ message: "复制失败，请手动长按保存" });
+            }
+        }
+
+
         // --- 业务逻辑：下单流程 ---
         async function checkSncode() {
             const sncode = document.querySelector('#sncode').value;
@@ -935,7 +1094,7 @@
                 showError(res?.msg || "查询无响应");
             }
         }
-        
+
         async function checkQualification() {
             const mobile = document.querySelector('#buyerMobile').value;
             if (!mobile) return showError("请输入手机号");
@@ -1052,6 +1211,10 @@
             const res = await callApi('/salesuser/addOrder', 'POST', payload);
             if (res?.code === 0) {
                 mdui.snackbar({ message: "订单提交成功！" });
+                // 提交成功后，直接弹出支付二维码
+                if (res.data) {
+                    openQrDialog(res.data);
+                }
             } else {
                 showError(res?.msg || "提交失败");
             }
