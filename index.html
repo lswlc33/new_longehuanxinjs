@@ -530,6 +530,13 @@
                     readonly></mdui-text-field>
             </div>
         </mdui-card>
+        <mdui-card variant="filled">
+            <div class="section-header">
+                <span class="section-title">SN码查询（仅 3C）</span>
+                <mdui-button variant="tonal" class="btn-small" onclick="checkSncode()">查询</mdui-button>
+            </div>
+            <mdui-text-field id="sncode" label="SN码" variant="outlined"></mdui-text-field>
+        </mdui-card>
     </div>
 
     <mdui-fab class="fab-submit" icon="check" variant="primary" extended onclick="submitOrder()">立即提交</mdui-fab>
@@ -915,6 +922,20 @@
         function closeConfirmDialog() { els.confirmDialog.open = false; orderToCancel = ""; }
 
         // --- 业务逻辑：下单流程 ---
+        async function checkSncode() {
+            const sncode = document.querySelector('#sncode').value;
+            if (!sncode) return showError("请输入sn码");
+            if (!currentToken) return showError("系统未就绪");
+
+            const res = await callApi('/salesuser/querySnState', 'GET', { snCode: sncode });
+
+            if (res?.code === 0) {
+                showError(res?.data.saleState + " " + res?.data.detail);
+            } else {
+                showError(res?.msg || "查询无响应");
+            }
+        }
+        
         async function checkQualification() {
             const mobile = document.querySelector('#buyerMobile').value;
             if (!mobile) return showError("请输入手机号");
