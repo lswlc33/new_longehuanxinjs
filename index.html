@@ -1121,6 +1121,10 @@
             if (res?.code === 0 && res.data) {
                 document.querySelector('#goodsName').value = res.data.goodsName;
                 document.querySelector('#filingPrice').value = res.data.subsidyBackPrice;
+                
+                // 将备案价自动单向同步到门店单价
+                document.querySelector('#shopPrice').value = res.data.subsidyBackPrice;
+                
                 calcPrice();
             } else {
                 showError(`商品查询失败: ${res?.msg}`);
