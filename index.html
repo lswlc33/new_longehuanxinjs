@@ -590,6 +590,10 @@
         let orderToRefund = "";
         let currentQrOrderNumber = "";
         let regionTree = {}; // 动态区域数据树
+        
+        // --- 轮询队列与通知状态 ---
+        let orderPollQueue = {}; // 结构: { "建行订单号": "当前已知状态值" }
+        let pollTimeoutId = null;
 
         // DOM 元素引用
         const els = {
@@ -652,6 +656,66 @@
         function showError(msg) {
             els.errorContent.innerText = msg || "未知错误";
             els.errorDialog.open = true;
+        }
+
+        // --- 轮询与通知模块 ---
+        function showNotification(title, body) {
+            if (!("Notification" in window)) return;
+            if (Notification.permission === "granted") {
+                new Notification(title, { body, icon: 'https://unpkg.com/mdui@2/icons/store.svg' });
+            }
+        }
+
+        async function pollOrderStatus() {
+            const queueKeys = Object.keys(orderPollQueue);
+            if (queueKeys.length === 0) {
+                pollTimeoutId = null; // 队列为空，停止轮询调度
+                return;
+            }
+
+            try {
+                for (const orderNum of queueKeys) {
+                    const res = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber: orderNum });
+                    if (res?.code === 0 && res.data?.payOrder) {
+                        const order = res.data.payOrder;
+                        const newState = order.payState;
+                        const oldState = orderPollQueue[orderNum];
+
+                        if (newState !== oldState) {
+                            const stateText = payStates[newState] || "未知状态";
+                            showNotification("订单状态变更", `订单号尾号: ${orderNum.slice(-4)}\n当前状态变为: ${stateText}`);
+                            orderPollQueue[orderNum] = newState;
+
+                            // 达到终态则移出队列 (2:已付款, 3:失败, 4:超时, 5:退款, 6:取消)
+                            if ([2, 3, 4, 5, 6].includes(newState)) {
+                                delete orderPollQueue[orderNum];
+                                
+                                // 自动关闭正在付款中的同订单二维码弹窗并提示
+                                if (newState === 2 && els.qrDialog.open && currentQrOrderNumber === orderNum) {
+                                    els.qrDialog.open = false;
+                                    mdui.snackbar({ message: "付款成功！" });
+                                }
+                                
+                                // 刷新抽屉内的列表（如果已打开）
+                                if (document.getElementById('orderDrawer').open) {
+                                    fetchOrders();
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("轮询异常:", e);
+            }
+
+            // 安全防并发递归调度：确保请求全部响应后，等待1秒再次触发
+            pollTimeoutId = setTimeout(pollOrderStatus, 1000);
+        }
+
+        function startPolling() {
+            if (!pollTimeoutId) {
+                pollTimeoutId = setTimeout(pollOrderStatus, 1000);
+            }
         }
 
         // --- 核心逻辑：登录与状态 ---
@@ -1161,6 +1225,11 @@
         }
 
         async function submitOrder() {
+            // 点击提交时主动请求浏览器通知权限
+            if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
+                Notification.requestPermission();
+            }
+
             if (!currentToken) return showError("Token 未就绪");
 
             // 获取表单数据
@@ -1216,9 +1285,11 @@
             const res = await callApi('/salesuser/addOrder', 'POST', payload);
             if (res?.code === 0) {
                 mdui.snackbar({ message: "订单提交成功！" });
-                // 提交成功后，直接弹出支付二维码
+                // 提交成功后，弹出支付二维码并加入轮询队列
                 if (res.data) {
                     openQrDialog(res.data);
+                    orderPollQueue[res.data] = 0; // 将订单(状态 0 待付款)推入队列
+                    startPolling(); // 启动轮询
                 }
             } else {
                 showError(res?.msg || "提交失败");
