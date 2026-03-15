@@ -1122,8 +1122,9 @@
                 document.querySelector('#goodsName').value = res.data.goodsName;
                 document.querySelector('#filingPrice').value = res.data.subsidyBackPrice;
                 
-                // 将备案价自动单向同步到门店单价
-                document.querySelector('#shopPrice').value = res.data.subsidyBackPrice;
+                // 备案价格大于10000填入10000，否则填入原备案价
+                const price = parseFloat(res.data.subsidyBackPrice);
+                document.querySelector('#shopPrice').value = (price > 10000) ? 10000 : res.data.subsidyBackPrice;
                 
                 calcPrice();
             } else {
