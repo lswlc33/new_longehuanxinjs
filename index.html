@@ -712,20 +712,26 @@
             }
 
             try {
-                // 前端调用钉钉Webhook可能会遇到CORS，所以使用 mode: 'no-cors'
-                await fetch(url, {
+                // 移除了 mode: 'no-cors'，以便能够正确发送 application/json
+                const response = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         msgtype: "text",
                         text: { content: content }
-                    }),
-                    mode: 'no-cors'
+                    })
                 });
-                console.log("钉钉推送请求已发出");
+                
+                const resData = await response.json();
+                if (resData.errcode === 0) {
+                    console.log("钉钉推送成功");
+                } else {
+                    console.error("钉钉推送返回错误:", resData);
+                    mdui.snackbar({ message: "钉钉推送失败: " + resData.errmsg });
+                }
             } catch (error) {
                 console.error("钉钉推送异常:", error);
-                mdui.snackbar({ message: "钉钉推送异常，请检查网络或控制台" });
+                mdui.snackbar({ message: "钉钉推送异常 (可能是跨域拦截)，请检查控制台" });
             }
         }
 
