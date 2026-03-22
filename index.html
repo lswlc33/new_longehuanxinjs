@@ -396,7 +396,7 @@
         </div>
         <div style="display: flex; gap: 4px;">
             <mdui-button-icon icon="list_alt" onclick="openOrderDrawer()" tooltip="订单列表"></mdui-button-icon>
-            <mdui-button-icon icon="settings" onclick="openConfigDialog()" tooltip="API设置"></mdui-button-icon>
+            <mdui-button-icon icon="settings" onclick="openConfigDialog()" tooltip="API与推送设置"></mdui-button-icon>
             <mdui-button-icon icon="refresh" onclick="autoLogin()" tooltip="刷新Token"></mdui-button-icon>
         </div>
     </div>
@@ -461,14 +461,23 @@
     </mdui-dialog>
 
     <mdui-dialog id="configDialog" close-on-overlay-click>
-        <span slot="headline">API 配置</span>
-        <div slot="description">
+        <span slot="headline">API 与推送配置</span>
+        <div slot="description" style="overflow-y: auto;">
             <p style="margin-bottom: 16px; font-size: 13px; opacity: 0.7;">配置将保存到本地浏览器缓存中。</p>
             <mdui-text-field id="configPayloadInput" label="Login Payload (Code)" variant="outlined"
-                helper="用于获取 Token 的身份标识字符串"></mdui-text-field>
+                helper="用于获取 Token 的身份标识字符串" style="margin-bottom: 16px;"></mdui-text-field>
+
+            <div style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 16px 0 8px 0; font-weight: bold;">钉钉推送配置</div>
+            <mdui-text-field id="configDingWebhook" label="钉钉 Webhook" variant="outlined"
+                helper="如: https://oapi.dingtalk.com/robot/send?access_token=xxx" style="margin-bottom: 16px;"></mdui-text-field>
+            <mdui-text-field id="configDingSecret" label="钉钉加签密钥 (Token/Secret)" variant="outlined"
+                helper="可选，如果在钉钉机器人设置了加签请填写"></mdui-text-field>
+            <div style="margin-top: 12px; text-align: right;">
+                <mdui-button variant="tonal" onclick="testDingTalk()" icon="send">测试钉钉消息</mdui-button>
+            </div>
         </div>
         <mdui-button slot="action" variant="text" onclick="closeConfigDialog()">取消</mdui-button>
-        <mdui-button slot="action" variant="filled" onclick="saveConfig()">保存并重连</mdui-button>
+        <mdui-button slot="action" variant="filled" onclick="saveConfig()">保存配置并重连</mdui-button>
     </mdui-dialog>
 
     <mdui-dialog id="errorDialog" close-on-overlay-click>
@@ -576,8 +585,12 @@
     <script>
         // --- 常量与全局状态 ---
         const API_BASE = "https://www.longehuanxinjs.com/ccb_equity_api_new";
+        
         const CONFIG_KEY = "APP_LOGIN_PAYLOAD";
         const DEFAULT_PAYLOAD = "";
+
+        const DINGTALK_WEBHOOK_KEY = "DINGTALK_WEBHOOK";
+        const DINGTALK_SECRET_KEY = "DINGTALK_SECRET";
 
         const payStates = {
             0: "待付款", 1: "支付中", 2: "已付款",
@@ -585,6 +598,9 @@
         };
 
         let loginPayload = DEFAULT_PAYLOAD;
+        let dingTalkWebhook = "";
+        let dingTalkSecret = "";
+        
         let currentToken = "";
         let orderToCancel = "";
         let orderToRefund = "";
@@ -594,6 +610,7 @@
         // --- 轮询队列与通知状态 ---
         let orderPollQueue = {}; // 结构: { "建行订单号": "当前已知状态值" }
         let pollTimeoutId = null;
+        let pendingOrderDetails = {}; // 结构: { "建行订单号": {订单详情对象} } 用于钉钉推送
 
         // DOM 元素引用
         const els = {
@@ -604,6 +621,8 @@
             statusBadge: document.querySelector('#tokenStatusBadge'),
             configDialog: document.querySelector('#configDialog'),
             configInput: document.querySelector('#configPayloadInput'),
+            dingWebhookInput: document.querySelector('#configDingWebhook'),
+            dingSecretInput: document.querySelector('#configDingSecret'),
             errorDialog: document.querySelector('#errorDialog'),
             errorContent: document.querySelector('#errorContent'),
             detailDialog: document.querySelector('#detailDialog'),
@@ -617,6 +636,9 @@
         // --- 初始化 ---
         window.addEventListener('load', () => {
             const stored = localStorage.getItem(CONFIG_KEY);
+            dingTalkWebhook = localStorage.getItem(DINGTALK_WEBHOOK_KEY) || "";
+            dingTalkSecret = localStorage.getItem(DINGTALK_SECRET_KEY) || "";
+            
             if (stored) {
                 loginPayload = stored;
                 autoLogin();
@@ -658,6 +680,67 @@
             els.errorDialog.open = true;
         }
 
+        // --- 钉钉推送模块 ---
+        async function sendDingTalkMessage(content, overrideWebhook, overrideSecret) {
+            const urlBase = overrideWebhook !== undefined ? overrideWebhook : dingTalkWebhook;
+            const secret = overrideSecret !== undefined ? overrideSecret : dingTalkSecret;
+
+            if (!urlBase) {
+                console.warn("未配置钉钉Webhook，跳过推送");
+                return;
+            }
+
+            let url = urlBase;
+
+            // 处理钉钉加签逻辑 (HMAC-SHA256)
+            if (secret) {
+                const timestamp = Date.now();
+                const stringToSign = timestamp + "\n" + secret;
+                const encoder = new TextEncoder();
+                
+                try {
+                    const key = await crypto.subtle.importKey(
+                        "raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+                    );
+                    const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(stringToSign));
+                    const base64Sign = btoa(String.fromCharCode(...new Uint8Array(signature)));
+                    const encodedSign = encodeURIComponent(base64Sign);
+                    url += (url.includes('?') ? '&' : '?') + `timestamp=${timestamp}&sign=${encodedSign}`;
+                } catch(e) {
+                    console.error("加签失败", e);
+                }
+            }
+
+            try {
+                // 前端调用钉钉Webhook可能会遇到CORS，所以使用 mode: 'no-cors'
+                await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        msgtype: "text",
+                        text: { content: content }
+                    }),
+                    mode: 'no-cors'
+                });
+                console.log("钉钉推送请求已发出");
+            } catch (error) {
+                console.error("钉钉推送异常:", error);
+                mdui.snackbar({ message: "钉钉推送异常，请检查网络或控制台" });
+            }
+        }
+
+        async function testDingTalk() {
+            const webhookUrl = els.dingWebhookInput.value.trim();
+            const secretVal = els.dingSecretInput.value.trim();
+            if (!webhookUrl) {
+                return mdui.snackbar({ message: "请先填写钉钉 Webhook 地址！" });
+            }
+            const testMsg = "测试消息：您已成功配置钉钉推送！\n\n张三 13800138000\n江苏省-常州市-武进区-南夏墅街道 城市大厦A座\n12345678\n测试商品\n0.01";
+            await sendDingTalkMessage(testMsg, webhookUrl, secretVal);
+            mdui.snackbar({ message: "测试推送请求已发送" });
+        }
+
+
         // --- 轮询与通知模块 ---
         function showNotification(title, body) {
             if (!("Notification" in window)) return;
@@ -690,10 +773,23 @@
                             if ([2, 3, 4, 5, 6].includes(newState)) {
                                 delete orderPollQueue[orderNum];
                                 
-                                // 自动关闭正在付款中的同订单二维码弹窗并提示
-                                if (newState === 2 && els.qrDialog.open && currentQrOrderNumber === orderNum) {
-                                    els.qrDialog.open = false;
-                                    mdui.snackbar({ message: "付款成功！" });
+                                // 已付款成功时处理：
+                                if (newState === 2) {
+                                    // 自动关闭正在付款中的同订单二维码弹窗并提示
+                                    if (els.qrDialog.open && currentQrOrderNumber === orderNum) {
+                                        els.qrDialog.open = false;
+                                        mdui.snackbar({ message: "付款成功！" });
+                                    }
+
+                                    // 触发钉钉推送
+                                    if (pendingOrderDetails[orderNum]) {
+                                        const info = pendingOrderDetails[orderNum];
+                                        // 格式化消息： 姓名 电话 / 地址 / 商品编码 / 商品名称 / 实付金额
+                                        const msg = `${info.name} ${info.mobile}\n${info.address}\n${info.goodsCode}\n${info.goodsName}\n${info.actual}`;
+                                        sendDingTalkMessage(msg);
+                                        // 推送完毕后清除记录
+                                        delete pendingOrderDetails[orderNum];
+                                    }
                                 }
                                 
                                 // 刷新抽屉内的列表（如果已打开）
@@ -760,6 +856,8 @@
         // --- 配置管理 ---
         function openConfigDialog() {
             els.configInput.value = loginPayload;
+            els.dingWebhookInput.value = dingTalkWebhook;
+            els.dingSecretInput.value = dingTalkSecret;
             els.configDialog.open = true;
         }
 
@@ -768,8 +866,15 @@
         function saveConfig() {
             const val = els.configInput.value.trim();
             if (!val) return mdui.snackbar({ message: "Payload 不能为空" });
+            
             loginPayload = val;
+            dingTalkWebhook = els.dingWebhookInput.value.trim();
+            dingTalkSecret = els.dingSecretInput.value.trim();
+
             localStorage.setItem(CONFIG_KEY, val);
+            localStorage.setItem(DINGTALK_WEBHOOK_KEY, dingTalkWebhook);
+            localStorage.setItem(DINGTALK_SECRET_KEY, dingTalkSecret);
+
             closeConfigDialog();
             mdui.snackbar({ message: "配置已保存，正在重连..." });
             autoLogin();
@@ -1234,7 +1339,9 @@
 
             // 获取表单数据
             const mobile = document.querySelector('#buyerMobile').value;
+            const buyerName = document.querySelector('#buyerName').value || ""; // 获取姓名
             const goodsCode = document.querySelector('#goodsCode').value;
+            const goodsName = document.querySelector('#goodsName').value || "未知商品";
             const shopPrice = document.querySelector('#shopPrice').value;
             const actual = document.querySelector('#actualPrice').value;
             const subsidy = document.querySelector('#subsidyPrice').value;
@@ -1264,6 +1371,17 @@
                 return showError("请填写完整订单信息（含乡镇/街道）");
             }
 
+            // 预存钉钉推送所需的订单信息记录
+            const addressStr = `${city}-${district}-${townName}-${detailAddr}`;
+            const pendingOrderRecord = {
+                name: buyerName,
+                mobile: mobile,
+                address: addressStr,
+                goodsCode: goodsCode,
+                goodsName: goodsName,
+                actual: actual || "0.00"
+            };
+
             const payload = {
                 shopOrderNumber: shopOrderNum,
                 buyerMobile: mobile,
@@ -1279,7 +1397,7 @@
                     uniscid: ""
                 }],
                 townCode, uniscid: "",
-                address: `${city}-${district}-${townName}-${detailAddr}`
+                address: addressStr
             };
 
             const res = await callApi('/salesuser/addOrder', 'POST', payload);
@@ -1287,6 +1405,9 @@
                 mdui.snackbar({ message: "订单提交成功！" });
                 // 提交成功后，弹出支付二维码并加入轮询队列
                 if (res.data) {
+                    // 将订单信息挂载到全局字典中供支付成功时提取发送
+                    pendingOrderDetails[res.data] = pendingOrderRecord;
+
                     openQrDialog(res.data);
                     orderPollQueue[res.data] = 0; // 将订单(状态 0 待付款)推入队列
                     startPolling(); // 启动轮询
