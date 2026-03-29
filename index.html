@@ -27,7 +27,6 @@
             margin: 0;
         }
 
-        /* --- 顶部状态栏 --- */
         .status-bar {
             position: fixed;
             top: 0;
@@ -75,7 +74,6 @@
             color: rgb(var(--mdui-color-on-primary-container));
         }
 
-        /* --- 主容器与卡片 --- */
         .container {
             width: 100%;
             max-width: 500px;
@@ -106,7 +104,6 @@
             color: rgb(var(--mdui-color-primary));
         }
 
-        /* --- 表单元素 --- */
         .row {
             display: flex;
             gap: 12px;
@@ -159,7 +156,6 @@
             z-index: 1000;
         }
 
-        /* --- 侧边栏与列表 --- */
         #orderDrawer {
             width: 100vw;
             max-width: 100vw;
@@ -212,7 +208,6 @@
             align-content: start;
         }
 
-        /* --- 订单卡片 --- */
         .order-card {
             background-color: rgb(var(--mdui-color-surface));
             border-radius: 16px;
@@ -255,7 +250,6 @@
             border-radius: 6px;
         }
 
-        /* 状态颜色 */
         .status-0 {
             background-color: #FFF3E0;
             color: #E65100;
@@ -323,7 +317,6 @@
             color: rgb(var(--mdui-color-primary));
         }
 
-        /* --- 详情弹窗 --- */
         .detail-grid {
             display: grid;
             grid-template-columns: 1fr;
@@ -374,7 +367,6 @@
             margin-top: 8px;
         }
 
-        /* 二维码图片 */
         .qr-image {
             width: 100%;
             max-width: 240px;
@@ -583,9 +575,10 @@
     <mdui-fab class="fab-submit" icon="check" variant="primary" extended onclick="submitOrder()">立即提交</mdui-fab>
 
     <script>
-        // --- 常量与全局状态 ---
-        const API_BASE = "https://www.longehuanxinjs.com/ccb_equity_api_new";
-        
+        const LONGE_API_BASE = "https://www.longehuanxinjs.com/ccb_equity_api_new";
+        const WORKER_API_BASE = "https://longe.xn--fiqz59cpva341l.top";
+        const DINGTALK_API_BASE = `${WORKER_API_BASE}/api/dingtalk/send`;
+
         const CONFIG_KEY = "APP_LOGIN_PAYLOAD";
         const DEFAULT_PAYLOAD = "";
 
@@ -600,19 +593,17 @@
         let loginPayload = DEFAULT_PAYLOAD;
         let dingTalkWebhook = "";
         let dingTalkSecret = "";
-        
+
         let currentToken = "";
         let orderToCancel = "";
         let orderToRefund = "";
         let currentQrOrderNumber = "";
-        let regionTree = {}; // 动态区域数据树
-        
-        // --- 轮询队列与通知状态 ---
-        let orderPollQueue = {}; // 结构: { "建行订单号": "当前已知状态值" }
-        let pollTimeoutId = null;
-        let pendingOrderDetails = {}; // 结构: { "建行订单号": {订单详情对象} } 用于钉钉推送
+        let regionTree = {};
 
-        // DOM 元素引用
+        let orderPollQueue = {};
+        let pollTimeoutId = null;
+        let pendingOrderDetails = {};
+
         const els = {
             city: document.querySelector('#citySelect'),
             district: document.querySelector('#districtSelect'),
@@ -633,12 +624,11 @@
             qrLoading: document.querySelector('#qrLoading')
         };
 
-        // --- 初始化 ---
         window.addEventListener('load', () => {
             const stored = localStorage.getItem(CONFIG_KEY);
             dingTalkWebhook = localStorage.getItem(DINGTALK_WEBHOOK_KEY) || "";
             dingTalkSecret = localStorage.getItem(DINGTALK_SECRET_KEY) || "";
-            
+
             if (stored) {
                 loginPayload = stored;
                 autoLogin();
@@ -647,21 +637,20 @@
                 openConfigDialog();
                 mdui.snackbar({ message: "请先配置 API Payload", placement: "top" });
             }
-            // 监听筛选器变化
+
             document.querySelector('#orderFilterGroup').addEventListener('change', () => fetchOrders());
         });
 
-        // --- 核心工具函数 ---
         async function callApi(endpoint, method = 'GET', data = null) {
             const headers = { "Content-Type": "application/json" };
             if (currentToken) headers["token"] = currentToken;
 
-            let url = `${API_BASE}${endpoint}`;
+            let url = `${LONGE_API_BASE}${endpoint}`;
             const options = { method, headers };
 
             if (method === 'GET' && data) {
                 url += `?${new URLSearchParams(data).toString()}`;
-            } else if (method === 'POST' && data) {
+            } else if (method !== 'GET' && data !== null && data !== undefined) {
                 options.body = JSON.stringify(data);
             }
 
@@ -680,58 +669,36 @@
             els.errorDialog.open = true;
         }
 
-        // --- 钉钉推送模块 ---
         async function sendDingTalkMessage(content, overrideWebhook, overrideSecret) {
-            const urlBase = overrideWebhook !== undefined ? overrideWebhook : dingTalkWebhook;
+            const accessToken = overrideWebhook !== undefined ? overrideWebhook : dingTalkWebhook;
             const secret = overrideSecret !== undefined ? overrideSecret : dingTalkSecret;
 
-            if (!urlBase) {
+            if (!accessToken) {
                 console.warn("未配置钉钉Webhook，跳过推送");
                 return;
             }
 
-            let url = urlBase;
-
-            // 处理钉钉加签逻辑 (HMAC-SHA256)
-            if (secret) {
-                const timestamp = Date.now();
-                const stringToSign = timestamp + "\n" + secret;
-                const encoder = new TextEncoder();
-                
-                try {
-                    const key = await crypto.subtle.importKey(
-                        "raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
-                    );
-                    const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(stringToSign));
-                    const base64Sign = btoa(String.fromCharCode(...new Uint8Array(signature)));
-                    const encodedSign = encodeURIComponent(base64Sign);
-                    url += (url.includes('?') ? '&' : '?') + `timestamp=${timestamp}&sign=${encodedSign}`;
-                } catch(e) {
-                    console.error("加签失败", e);
-                }
-            }
-
             try {
-                // 移除了 mode: 'no-cors'，以便能够正确发送 application/json
-                const response = await fetch(url, {
+                const response = await fetch(DINGTALK_API_BASE, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        msgtype: "text",
-                        text: { content: content }
+                        accessToken,
+                        secret,
+                        content
                     })
                 });
-                
+
                 const resData = await response.json();
-                if (resData.errcode === 0) {
+                if (resData.errcode === 0 || resData.code === 0) {
                     console.log("钉钉推送成功");
                 } else {
                     console.error("钉钉推送返回错误:", resData);
-                    mdui.snackbar({ message: "钉钉推送失败: " + resData.errmsg });
+                    mdui.snackbar({ message: "钉钉推送失败: " + (resData.errmsg || resData.msg || "未知错误") });
                 }
             } catch (error) {
                 console.error("钉钉推送异常:", error);
-                mdui.snackbar({ message: "钉钉推送异常 (可能是跨域拦截)，请检查控制台" });
+                mdui.snackbar({ message: "钉钉推送异常，请检查后端服务" });
             }
         }
 
@@ -746,8 +713,6 @@
             mdui.snackbar({ message: "测试推送请求已发送" });
         }
 
-
-        // --- 轮询与通知模块 ---
         function showNotification(title, body) {
             if (!("Notification" in window)) return;
             if (Notification.permission === "granted") {
@@ -758,7 +723,7 @@
         async function pollOrderStatus() {
             const queueKeys = Object.keys(orderPollQueue);
             if (queueKeys.length === 0) {
-                pollTimeoutId = null; // 队列为空，停止轮询调度
+                pollTimeoutId = null;
                 return;
             }
 
@@ -775,30 +740,23 @@
                             showNotification("订单状态变更", `订单号尾号: ${orderNum.slice(-4)}\n当前状态变为: ${stateText}`);
                             orderPollQueue[orderNum] = newState;
 
-                            // 达到终态则移出队列 (2:已付款, 3:失败, 4:超时, 5:退款, 6:取消)
                             if ([2, 3, 4, 5, 6].includes(newState)) {
                                 delete orderPollQueue[orderNum];
-                                
-                                // 已付款成功时处理：
+
                                 if (newState === 2) {
-                                    // 自动关闭正在付款中的同订单二维码弹窗并提示
                                     if (els.qrDialog.open && currentQrOrderNumber === orderNum) {
                                         els.qrDialog.open = false;
                                         mdui.snackbar({ message: "付款成功！" });
                                     }
 
-                                    // 触发钉钉推送
                                     if (pendingOrderDetails[orderNum]) {
                                         const info = pendingOrderDetails[orderNum];
-                                        // 格式化消息： 姓名 电话 / 地址 / 商品编码 / 商品名称 / 实付金额
                                         const msg = `${info.name} ${info.mobile}\n${info.address}\n${info.goodsCode}\n${info.goodsName}\n${info.actual}`;
                                         sendDingTalkMessage(msg);
-                                        // 推送完毕后清除记录
                                         delete pendingOrderDetails[orderNum];
                                     }
                                 }
-                                
-                                // 刷新抽屉内的列表（如果已打开）
+
                                 if (document.getElementById('orderDrawer').open) {
                                     fetchOrders();
                                 }
@@ -810,7 +768,6 @@
                 console.error("轮询异常:", e);
             }
 
-            // 安全防并发递归调度：确保请求全部响应后，等待1秒再次触发
             pollTimeoutId = setTimeout(pollOrderStatus, 1000);
         }
 
@@ -820,19 +777,26 @@
             }
         }
 
-        // --- 核心逻辑：登录与状态 ---
         async function autoLogin() {
             updateStatus(false, "正在连接...");
-            const res = await callApi('/miniUser/getToken', 'POST', loginPayload);
+            const payload = loginPayload ? safeParsePayload(loginPayload) : "";
+            const res = await callApi('/miniUser/getToken', 'POST', payload);
 
             if (res?.code === 0 && res.data) {
                 currentToken = res.data;
-                console.log("Token Refreshed");
                 await checkTokenStatus();
-                fetchRegionData(); // 登录成功后拉取地址库
+                fetchRegionData();
             } else {
                 updateStatus(false, "Token获取失败");
                 showError(`登录失败: ${res?.msg || '请检查配置'}`);
+            }
+        }
+
+        function safeParsePayload(raw) {
+            try {
+                return JSON.parse(raw);
+            } catch (_) {
+                return raw;
             }
         }
 
@@ -859,7 +823,6 @@
             }
         }
 
-        // --- 配置管理 ---
         function openConfigDialog() {
             els.configInput.value = loginPayload;
             els.dingWebhookInput.value = dingTalkWebhook;
@@ -872,7 +835,7 @@
         function saveConfig() {
             const val = els.configInput.value.trim();
             if (!val) return mdui.snackbar({ message: "Payload 不能为空" });
-            
+
             loginPayload = val;
             dingTalkWebhook = els.dingWebhookInput.value.trim();
             dingTalkSecret = els.dingSecretInput.value.trim();
@@ -886,8 +849,6 @@
             autoLogin();
         }
 
-        // --- UI 逻辑：级联选择器 ---
-        // 包含针对 MDUI 组件的赋值延迟 Hack
         function populateSelect(selectElement, options, selectedValue = "") {
             selectElement.innerHTML = '';
             const defItem = document.createElement('mdui-menu-item');
@@ -919,7 +880,6 @@
             }
         }
 
-        // 地址库加载与解析
         async function fetchRegionData() {
             if (!currentToken) return;
             const res = await callApi('/salesuser/getTownList', 'GET');
@@ -962,7 +922,6 @@
             } catch (e) { console.error("地址解析错误", e); }
         }
 
-        // 级联事件监听
         els.city.addEventListener('change', () => {
             const city = els.city.value;
             populateSelect(els.district, city ? Object.keys(regionTree[city] || {}) : []);
@@ -976,8 +935,6 @@
             populateSelect(els.town, towns);
         });
 
-
-        // --- 业务逻辑：订单管理 ---
         function toggleOrderInput() {
             const cb = document.querySelector('#autoOrderNumCheckbox');
             const input = document.querySelector('#shopOrderNumber');
@@ -990,7 +947,7 @@
             fetchOrders(document.getElementById('orderSearchMobile').value);
         }
 
-        async function fetchOrders(mobile = "") {
+        async function fetchOrders() {
             const container = document.getElementById('orderListContainer');
             if (!currentToken) {
                 container.innerHTML = '<div style="padding: 20px; text-align: center; color: red;">请先获取 Token</div>';
@@ -1009,15 +966,11 @@
             if (res?.code === 0 && res.data?.shopOrders) {
                 let orders = res.data.shopOrders;
 
-                // 筛选逻辑修改：
-                // 如果筛选值存在
                 if (filterVal) {
                     if (filterVal === "0") {
-                        // "未支付" 分组包含 0 (待付款) 和 1 (支付中)
                         orders = orders.filter(o => o.payState === 0 || o.payState === 1);
                     } else {
-                        // 其他状态精确匹配 (如 2:已付款, 5:已退款, 4:超时)
-                        orders = orders.filter(o => o.payState === parseInt(filterVal));
+                        orders = orders.filter(o => o.payState === parseInt(filterVal, 10));
                     }
                 }
 
@@ -1029,23 +982,20 @@
                 container.innerHTML = orders.map(order => {
                     const statusText = payStates[order.payState] || "未知";
 
-                    // 构建卡片底部：如果是未支付或支付中，显示去支付按钮
                     let footerContent = '';
                     if (order.payState === 0 || order.payState === 1) {
                         footerContent = `
-
-                                <mdui-button icon="qr_code_2" variant="tonal" 
-                                    onclick="event.stopPropagation(); openQrDialog('${order.ccbPayOrderNumber}')">
-                                    去支付
-                                </mdui-button>
-                                <span class="price-value">¥${order.shopActualPayPrice}</span>
-
-                         `;
+                            <mdui-button icon="qr_code_2" variant="tonal"
+                                onclick="event.stopPropagation(); openQrDialog('${order.ccbPayOrderNumber}')">
+                                去支付
+                            </mdui-button>
+                            <span class="price-value">¥${order.shopActualPayPrice}</span>
+                        `;
                     } else {
                         footerContent = `
                             <span class="price-label">实付金额</span>
                             <span class="price-value">¥${order.shopActualPayPrice}</span>
-                         `;
+                        `;
                     }
 
                     return `
@@ -1098,7 +1048,6 @@
             loading.style.display = 'block';
             content.style.display = 'none';
 
-            // 默认添加关闭按钮
             addBtn("关闭", () => dialog.open = false);
 
             const res = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber });
@@ -1108,11 +1057,8 @@
                 const order = res.data.payOrder;
                 const product = order.goodsOrderList?.[0] || {};
 
-                // 按钮逻辑
-                // 清除之前的按钮重新添加，确保顺序
                 dialog.querySelectorAll('[slot="action"]').forEach(el => el.remove());
 
-                // 待付款 (0) -> 取消订单
                 if (order.payState === 0 || order.payState === 1) {
                     addBtn("取消订单", () => {
                         dialog.open = false;
@@ -1123,7 +1069,6 @@
                     }, "rgb(var(--mdui-color-error))");
                 }
 
-                // 已付款 (2) -> 退款
                 if (order.payState === 2) {
                     addBtn("退款", () => {
                         dialog.open = false;
@@ -1163,7 +1108,6 @@
             }
         }
 
-        // 订单取消确认逻辑
         document.getElementById('confirmCancelBtn').addEventListener('click', async () => {
             if (!orderToCancel) return;
             els.confirmDialog.open = false;
@@ -1179,22 +1123,21 @@
 
         function closeConfirmDialog() { els.confirmDialog.open = false; orderToCancel = ""; }
 
-        // --- 业务逻辑：退款流程 ---
         document.getElementById('confirmRefundBtn').addEventListener('click', async () => {
             if (!orderToRefund) return;
             els.refundDialog.open = false;
 
             const payload = {
-                "shopRefundOrderNumber": "",
-                "ccbPayOrderNumber": orderToRefund,
-                "goodsList": []
+                shopRefundOrderNumber: "",
+                ccbPayOrderNumber: orderToRefund,
+                goodsList: []
             };
 
             const res = await callApi('/salesuser/auditRefundOrder', 'POST', payload);
 
             if (res?.code === 0) {
                 mdui.snackbar({ message: "退款成功", placement: "top" });
-                fetchOrders(); // 刷新列表查看状态变化
+                fetchOrders();
             } else {
                 showError(res?.msg || "退款请求失败");
             }
@@ -1203,7 +1146,6 @@
 
         function closeRefundDialog() { els.refundDialog.open = false; orderToRefund = ""; }
 
-        // --- 业务逻辑：二维码支付 ---
         function openQrDialog(ccbOrderNum) {
             if (!ccbOrderNum) return mdui.snackbar({ message: "无效的订单号" });
             currentQrOrderNumber = ccbOrderNum;
@@ -1227,7 +1169,6 @@
             els.qrLoading.style.display = 'none';
 
             if (res?.code === 0 && res.data?.paymentQrCode) {
-                // 处理 base64 图片前缀
                 const base64Str = res.data.paymentQrCode;
                 const src = base64Str.startsWith('data:') ? base64Str : `data:image/png;base64,${base64Str}`;
                 els.qrImage.src = src;
@@ -1254,8 +1195,6 @@
             }
         }
 
-
-        // --- 业务逻辑：下单流程 ---
         async function checkSncode() {
             const sncode = document.querySelector('#sncode').value;
             if (!sncode) return showError("请输入sn码");
@@ -1296,11 +1235,10 @@
             if (res?.code === 0 && res.data) {
                 document.querySelector('#goodsName').value = res.data.goodsName;
                 document.querySelector('#filingPrice').value = res.data.subsidyBackPrice;
-                
-                // 备案价格大于10000填入10000，否则填入原备案价
+
                 const price = parseFloat(res.data.subsidyBackPrice);
                 document.querySelector('#shopPrice').value = (price > 10000) ? 10000 : res.data.subsidyBackPrice;
-                
+
                 calcPrice();
             } else {
                 showError(`商品查询失败: ${res?.msg}`);
@@ -1329,23 +1267,21 @@
                 buyerMobile: "", pageNumber: "1", uploadFile3COrder: ""
             });
             if (res?.code === 0 && res.data?.shopOrders?.length > 0) {
-                const num = parseInt(res.data.shopOrders[0].shopOrderNumber);
-                return isNaN(num) ? "1" : (num + 1).toString();
+                const num = parseInt(res.data.shopOrders[0].shopOrderNumber, 10);
+                return Number.isNaN(num) ? "1" : (num + 1).toString();
             }
             return "1";
         }
 
         async function submitOrder() {
-            // 点击提交时主动请求浏览器通知权限
             if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
                 Notification.requestPermission();
             }
 
             if (!currentToken) return showError("Token 未就绪");
 
-            // 获取表单数据
             const mobile = document.querySelector('#buyerMobile').value;
-            const buyerName = document.querySelector('#buyerName').value || ""; // 获取姓名
+            const buyerName = document.querySelector('#buyerName').value || "";
             const goodsCode = document.querySelector('#goodsCode').value;
             const goodsName = document.querySelector('#goodsName').value || "未知商品";
             const shopPrice = document.querySelector('#shopPrice').value;
@@ -1364,7 +1300,6 @@
                 } catch (e) { return showError("自动获取单号失败"); }
             }
 
-            // 获取乡镇名称（兜底逻辑）
             let townName = "";
             const townItem = els.town.querySelector(`mdui-menu-item[value="${townCode}"]`);
             if (townItem) townName = townItem.innerText;
@@ -1377,14 +1312,13 @@
                 return showError("请填写完整订单信息（含乡镇/街道）");
             }
 
-            // 预存钉钉推送所需的订单信息记录
             const addressStr = `${city}-${district}-${townName}-${detailAddr}`;
             const pendingOrderRecord = {
                 name: buyerName,
-                mobile: mobile,
+                mobile,
                 address: addressStr,
-                goodsCode: goodsCode,
-                goodsName: goodsName,
+                goodsCode,
+                goodsName,
                 actual: actual || "0.00"
             };
 
@@ -1395,41 +1329,38 @@
                 shopOriginalPrice: parseFloat(shopPrice).toFixed(2),
                 subsidyTotalAmount: parseFloat(subsidy || 0).toFixed(2),
                 goodsVoList: [{
-                    goodsCode, goodsName: document.querySelector('#goodsName').value,
+                    goodsCode,
+                    goodsName: document.querySelector('#goodsName').value,
                     goodsCount: 1,
                     shopGoodsActualPayPrice: parseFloat(actual || 0),
                     shopGoodsOriginalPrice: parseFloat(shopPrice),
                     subsidyAmount: parseFloat(subsidy || 0),
                     uniscid: ""
                 }],
-                townCode, uniscid: "",
+                townCode,
+                uniscid: "",
                 address: addressStr
             };
 
             const res = await callApi('/salesuser/addOrder', 'POST', payload);
             if (res?.code === 0) {
                 mdui.snackbar({ message: "订单提交成功！" });
-                // 提交成功后，弹出支付二维码并加入轮询队列
                 if (res.data) {
-                    // 将订单信息挂载到全局字典中供支付成功时提取发送
                     pendingOrderDetails[res.data] = pendingOrderRecord;
-
                     openQrDialog(res.data);
-                    orderPollQueue[res.data] = 0; // 将订单(状态 0 待付款)推入队列
-                    startPolling(); // 启动轮询
+                    orderPollQueue[res.data] = 0;
+                    startPolling();
                 }
             } else {
                 showError(res?.msg || "提交失败");
             }
         }
 
-        // --- 业务逻辑：智能识别 ---
         function smartParse() {
             const raw = document.querySelector('#smartInput').value;
             if (!raw.trim()) return mdui.snackbar({ message: "请先输入文本" });
             if (!Object.keys(regionTree).length) return mdui.snackbar({ message: "地址库未加载" });
 
-            // 1. 提取手机号
             let mobile = "";
             const phoneMatch = raw.match(/1[3-9]\d{9}/);
             if (phoneMatch) {
@@ -1438,27 +1369,22 @@
                 checkQualification();
             }
 
-            // 2. 提取地址（遍历树）
             let matched = { city: "", dist: "", townCode: "", townName: "" };
 
-            // 查找策略：优先匹配乡镇
             searchLoop:
             for (const cKey in regionTree) {
                 for (const dKey in regionTree[cKey]) {
                     const towns = regionTree[cKey][dKey];
-                    // 检查乡镇
                     const tMatch = towns.find(t => raw.includes(t.text));
                     if (tMatch) {
                         matched = { city: cKey, dist: dKey, townCode: tMatch.value, townName: tMatch.text };
                         break searchLoop;
                     }
-                    // 检查区县 (模糊匹配)
                     const simpleD = dKey.replace(/[区市县]$/, '');
                     if (raw.includes(dKey) || (simpleD.length >= 2 && raw.includes(simpleD))) {
                         if (!matched.city) { matched.city = cKey; matched.dist = dKey; }
                     }
                 }
-                // 检查城市
                 if (!matched.city) {
                     const simpleC = cKey.replace(/市$/, '');
                     if (raw.includes(cKey) || (simpleC.length >= 2 && raw.includes(simpleC))) {
@@ -1469,7 +1395,6 @@
             }
 
             if (matched.city) {
-                // 阶梯式 UI 更新
                 els.city.value = matched.city;
                 setTimeout(() => {
                     populateSelect(els.district, Object.keys(regionTree[matched.city]), matched.dist);
@@ -1482,8 +1407,7 @@
                 mdui.snackbar({ message: "未识别到地址信息" });
             }
 
-            // 3. 提取姓名 (简单规则：排除地址关键字和数字，长度2-4)
-            let rest = raw.replace(mobile, " ").split(/[\s,，。;；\n、]+/).filter(x => x.trim());
+            const rest = raw.replace(mobile, " ").split(/[\s,，。;；\n、]+/).filter(x => x.trim());
             const keywords = ["路", "号", "栋", "单元", "室", "区", "市", "县", "镇", "省", "苑", "园", "村", "街"];
             const name = rest.find(p =>
                 p.length >= 2 && p.length <= 4 && !keywords.some(k => p.includes(k)) &&
@@ -1492,8 +1416,7 @@
             );
             if (name) document.querySelector('#buyerName').value = name;
 
-            // 4. 提取详细地址 (移除已知部分)
-            let addr = raw.replace(mobile, "").replace(name || "", "")
+            const addr = raw.replace(mobile, "").replace(name || "", "")
                 .replace(matched.townName, "").replace(matched.dist, "").replace(matched.city, "")
                 .replace(/[区市县]$/, "").replace(/[,，。;；\n、]/g, " ").replace(/\s+/g, " ").trim();
             document.querySelector('#detailAddress').value = addr;
