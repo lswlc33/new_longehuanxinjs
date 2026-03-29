@@ -602,7 +602,7 @@
 
         let orderPollQueue = {};
         let pollTimeoutId = null;
-        let pendingOrderDetails = {};
+        let pendingOrderMobiles = {};
 
         const els = {
             city: document.querySelector('#citySelect'),
@@ -720,6 +720,33 @@
             }
         }
 
+        function formatPriceText(value) {
+            const num = Number(value || 0);
+            return `¥${num.toFixed(2)}`;
+        }
+
+        function buildDingTalkOrderMessage(order, fallbackMobile = "") {
+            const product = order?.goodsOrderList?.[0] || {};
+            const buyerName = order?.buyerName || "";
+            const mobile = fallbackMobile || order?.buyerMobile || "";
+            const address = order?.address || "";
+            const goodsText = product.goodsModel || product.goodsName || order?.goodsName || "";
+            const actualPrice = formatPriceText(order?.shopActualPayPrice);
+
+            return [
+                "订单支付成功！",
+                "",
+                "建行单号：",
+                order?.ccbPayOrderNumber || "",
+                `门店单号：${order?.shopOrderNumber || ""}`,
+                "用户信息：",
+                `${buyerName} ${mobile}`.trim(),
+                address,
+                `商品：${goodsText}`,
+                `实付：${actualPrice}`
+            ].join("\n");
+        }
+
         async function pollOrderStatus() {
             const queueKeys = Object.keys(orderPollQueue);
             if (queueKeys.length === 0) {
@@ -749,12 +776,9 @@
                                         mdui.snackbar({ message: "付款成功！" });
                                     }
 
-                                    if (pendingOrderDetails[orderNum]) {
-                                        const info = pendingOrderDetails[orderNum];
-                                        const msg = `${info.name} ${info.mobile}\n${info.address}\n${info.goodsCode}\n${info.goodsName}\n${info.actual}`;
-                                        sendDingTalkMessage(msg);
-                                        delete pendingOrderDetails[orderNum];
-                                    }
+                                    const msg = buildDingTalkOrderMessage(order, pendingOrderMobiles[orderNum]);
+                                    sendDingTalkMessage(msg);
+                                    delete pendingOrderMobiles[orderNum];
                                 }
 
                                 if (document.getElementById('orderDrawer').open) {
@@ -1313,14 +1337,6 @@
             }
 
             const addressStr = `${city}-${district}-${townName}-${detailAddr}`;
-            const pendingOrderRecord = {
-                name: buyerName,
-                mobile,
-                address: addressStr,
-                goodsCode,
-                goodsName,
-                actual: actual || "0.00"
-            };
 
             const payload = {
                 shopOrderNumber: shopOrderNum,
@@ -1346,7 +1362,7 @@
             if (res?.code === 0) {
                 mdui.snackbar({ message: "订单提交成功！" });
                 if (res.data) {
-                    pendingOrderDetails[res.data] = pendingOrderRecord;
+                    pendingOrderMobiles[res.data] = mobile;
                     openQrDialog(res.data);
                     orderPollQueue[res.data] = 0;
                     startPolling();
