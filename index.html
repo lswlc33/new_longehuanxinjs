@@ -410,8 +410,8 @@
         .detail-grid {
             display: grid;
             grid-template-columns: 1fr;
-            gap: 16px;
-            padding: 8px 0;
+            gap: 10px;
+            padding: 4px 0;
         }
 
         @media (min-width: 600px) {
@@ -427,16 +427,16 @@
         .detail-item {
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 2px;
         }
 
         .detail-label {
-            font-size: 12px;
+            font-size: 11px;
             color: rgb(var(--mdui-color-outline));
         }
 
         .detail-value {
-            font-size: 15px;
+            font-size: 14px;
             color: rgb(var(--mdui-color-on-surface));
             word-break: break-all;
             font-weight: 500;
@@ -446,29 +446,29 @@
             grid-column: 1 / -1;
             height: 1px;
             background-color: rgba(0, 0, 0, 0.1);
-            margin: 8px 0;
+            margin: 4px 0;
         }
 
         .section-sub-title {
             grid-column: 1 / -1;
-            font-size: 14px;
+            font-size: 13px;
             color: rgb(var(--mdui-color-primary));
             font-weight: bold;
-            margin-top: 8px;
+            margin-top: 2px;
         }
 
         .detail-collapse {
             grid-column: 1 / -1;
             border: 1px solid rgba(0, 0, 0, 0.08);
-            border-radius: 12px;
+            border-radius: 10px;
             background-color: rgb(var(--mdui-color-surface-container-low));
-            padding: 12px 14px;
+            padding: 8px 10px;
         }
 
         .detail-collapse summary {
             cursor: pointer;
             list-style: none;
-            font-size: 14px;
+            font-size: 13px;
             color: rgb(var(--mdui-color-primary));
             font-weight: bold;
             user-select: none;
@@ -481,8 +481,8 @@
         .detail-collapse-content {
             display: grid;
             grid-template-columns: 1fr;
-            gap: 16px;
-            padding-top: 12px;
+            gap: 10px;
+            padding-top: 8px;
         }
 
         @media (min-width: 600px) {
@@ -614,7 +614,7 @@
 
             <div class="drawer-search">
                 <mdui-text-field id="orderSearchMobile" icon="search" placeholder="手机号或订单号" variant="outlined"
-                    style="flex: 1;" onkeydown="if(event.key==='Enter') fetchOrders()"></mdui-text-field>
+                    clearable style="flex: 1;" onkeydown="if(event.key==='Enter') fetchOrders()"></mdui-text-field>
                 <mdui-button variant="filled" onclick="fetchOrders()">搜索</mdui-button>
             </div>
 
@@ -638,7 +638,12 @@
     </mdui-navigation-drawer>
 
     <mdui-dialog id="detailDialog" close-on-overlay-click>
-        <span slot="headline">订单详情</span>
+        <div slot="headline" style="display: flex; align-items: center; gap: 8px; width: 100%;">
+            <span>订单详情</span>
+            <mdui-button id="detailPushBtn" variant="text"
+                style="display: none; margin-left: auto; color: rgb(var(--mdui-color-error));"
+                onclick="openDetailPushDialog()">补推送</mdui-button>
+        </div>
         <div slot="description" style="overflow-y: auto;">
             <div id="detailLoading" style="text-align: center; padding: 20px;">
                 <mdui-circular-progress></mdui-circular-progress>
@@ -676,9 +681,9 @@
                 style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
                 钉钉推送配置
             </div>
-            <mdui-text-field id="configDingWebhook" label="钉钉 Webhook" variant="outlined"
+            <mdui-text-field id="configDingWebhook" label="钉钉 Webhook" variant="outlined" clearable
                 style="margin-bottom: 16px;"></mdui-text-field>
-            <mdui-text-field id="configDingSecret" label="钉钉加签密钥 (Token/Secret)" variant="outlined"></mdui-text-field>
+            <mdui-text-field id="configDingSecret" label="钉钉加签密钥 (Token/Secret)" variant="outlined" clearable></mdui-text-field>
             <div style="margin-top: 12px; text-align: right;">
                 <mdui-button variant="tonal" onclick="testDingTalk()" icon="send">测试钉钉消息</mdui-button>
             </div>
@@ -714,7 +719,7 @@
         <span slot="headline">推送确认</span>
         <div slot="description" style="overflow-y: auto;">
             <div style="margin-bottom: 12px;">请输入完整手机号，已推送的不要重复推送</div>
-            <mdui-text-field id="pushMobileInput" label="手机号" variant="outlined"></mdui-text-field>
+            <mdui-text-field id="pushMobileInput" label="手机号" variant="outlined" clearable></mdui-text-field>
         </div>
         <mdui-button slot="action" variant="text" onclick="closePushDialog()">取消</mdui-button>
         <mdui-button slot="action" variant="filled" id="confirmPushBtn">确认推送</mdui-button>
@@ -726,7 +731,7 @@
                 <span class="section-title">智能填充</span>
                 <mdui-button variant="tonal" class="btn-small" onclick="smartParse()">智能识别</mdui-button>
             </div>
-            <mdui-text-field id="smartInput" variant="outlined"
+            <mdui-text-field id="smartInput" variant="outlined" clearable
                 placeholder="在此粘贴：130xxxxx30 南夏墅街道 城市大厦A座1102"></mdui-text-field>
         </mdui-card>
 
@@ -735,7 +740,7 @@
                 <span class="section-title">补贴资格申领人信息</span>
                 <mdui-button variant="tonal" class="btn-small" onclick="checkQualification()">资格核验</mdui-button>
             </div>
-            <mdui-text-field id="buyerMobile" label="手机号" variant="outlined"></mdui-text-field>
+            <mdui-text-field id="buyerMobile" label="手机号" variant="outlined" clearable></mdui-text-field>
             <div id="productCategoryChips" class="chip-container readonly-chips">
                 <mdui-chip variant="filter" selectable value="A01">电视</mdui-chip>
                 <mdui-chip variant="filter" selectable value="A02">冰箱</mdui-chip>
@@ -765,21 +770,21 @@
             <div class="row">
                 <mdui-select id="townSelect" label="乡镇/街道" variant="outlined"></mdui-select>
             </div>
-            <mdui-text-field id="detailAddress" label="详细地址" variant="outlined"></mdui-text-field>
+            <mdui-text-field id="detailAddress" label="详细地址" variant="outlined" clearable></mdui-text-field>
         </mdui-card>
 
         <mdui-card variant="filled">
             <div class="section-header">
                 <span class="section-title">商品信息</span>
             </div>
-            <mdui-text-field id="goodsCode" label="商品编号" variant="outlined" onblur="queryGoodsInfo()"></mdui-text-field>
+            <mdui-text-field id="goodsCode" label="商品编号" variant="outlined" clearable onblur="queryGoodsInfo()"></mdui-text-field>
             <mdui-text-field id="goodsName" label="商品名称" placeholder="自动计算" variant="outlined"
                 readonly></mdui-text-field>
             <div class="row">
                 <mdui-text-field id="filingPrice" label="备案价" placeholder="自动计算" variant="outlined"
                     readonly></mdui-text-field>
                 <mdui-text-field id="shopPrice" label="门店单价" type="number" placeholder="请输入价格" variant="outlined"
-                    onchange="calcPrice()"></mdui-text-field>
+                    clearable onchange="calcPrice()"></mdui-text-field>
             </div>
             <div class="row">
                 <mdui-text-field id="actualPrice" label="实付单价" type="number" placeholder="自动计算" variant="outlined"
@@ -793,7 +798,7 @@
                 <span class="section-title">SN码查询（仅 3C）</span>
                 <mdui-button variant="tonal" class="btn-small" onclick="checkSncode()">查询</mdui-button>
             </div>
-            <mdui-text-field id="sncode" label="SN码" variant="outlined"></mdui-text-field>
+            <mdui-text-field id="sncode" label="SN码" variant="outlined" clearable></mdui-text-field>
         </mdui-card>
     </div>
 
@@ -947,10 +952,7 @@
                             onchange="setCurrentStoreIndex(${index}, false)"
                             style="flex: 1; font-size: 14px; font-weight: 600; color: rgb(var(--mdui-color-primary));"
                         >
-                            ${escapeHtml(getStoreDisplayName(store, index))}
-                            <span style="font-size: 12px; font-weight: normal; color: rgb(var(--mdui-color-outline)); margin-left: 6px;">
-                                ${store.verified ? '· 已验证' : ''}
-                            </span>
+                            ${`门店 ${index + 1}`}
                         </mdui-radio>
                         <div class="payload-item-actions">
                             <mdui-button-icon icon="verified" tooltip="验证" onclick="validatePayloadEntry(${index})"></mdui-button-icon>
@@ -960,7 +962,9 @@
                     <mdui-text-field
                         data-payload-index="${index}"
                         label="Login Payload (Code)"
+                        helper="${escapeHtml(`${getStoreDisplayName(store, index)} · ${store.verified ? '已验证' : '未验证'}`)}"
                         variant="outlined"
+                        clearable
                     ></mdui-text-field>
                 `;
 
@@ -1255,9 +1259,11 @@
                         const oldState = orderPollQueue[orderNum];
 
                         if (newState !== oldState) {
-                            const stateText = payStates[newState] || "未知状态";
-                            showNotification("订单状态变更", `订单号尾号: ${orderNum.slice(-4)}\n当前状态变为: ${stateText}`);
                             orderPollQueue[orderNum] = newState;
+
+                            if (newState === 2) {
+                                showNotification("订单支付成功", `订单号尾号: ${orderNum.slice(-4)}\n状态: 已付款`);
+                            }
 
                             if ([2, 3, 4, 5, 6].includes(newState)) {
                                 delete orderPollQueue[orderNum];
@@ -1600,6 +1606,10 @@
             if (!orderNumber) return mdui.snackbar({ message: "无效订单号" });
 
             const dialog = els.detailDialog;
+            const detailPushBtn = document.getElementById('detailPushBtn');
+            orderToPush = null;
+            detailPushBtn.style.display = 'none';
+
             dialog.open = true;
             dialog.querySelectorAll('[slot="action"]').forEach(el => el.remove());
 
@@ -1641,13 +1651,8 @@
                 }
 
                 if (order.payState === 2) {
-                    addBtn("补推送", () => {
-                        dialog.open = false;
-                        setTimeout(() => {
-                            orderToPush = order;
-                            els.pushDialog.open = true;
-                        }, 200);
-                    }, "rgb(var(--mdui-color-error))");
+                    orderToPush = order;
+                    detailPushBtn.style.display = 'inline-flex';
 
                     addBtn("退款", () => {
                         dialog.open = false;
@@ -1728,6 +1733,16 @@
         });
 
         function closeRefundDialog() { els.refundDialog.open = false; orderToRefund = ""; }
+
+        function openDetailPushDialog() {
+            if (!orderToPush) {
+                return mdui.snackbar({ message: "当前订单不支持补推送" });
+            }
+            els.detailDialog.open = false;
+            setTimeout(() => {
+                els.pushDialog.open = true;
+            }, 200);
+        }
 
         document.getElementById('confirmPushBtn').addEventListener('click', async () => {
             const pushMobile = els.pushMobileInput.value.trim();
