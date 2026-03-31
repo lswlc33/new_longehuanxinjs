@@ -593,9 +593,15 @@
             <span id="displayShopName" class="shop-name" onclick="openShopMenu()">正在加载...</span>
         </div>
         <div style="display: flex; gap: 4px;">
-            <mdui-button-icon icon="list_alt" onclick="openOrderDrawer()" tooltip="订单列表"></mdui-button-icon>
-            <mdui-button-icon icon="settings" onclick="openConfigDialog()" tooltip="API与推送设置"></mdui-button-icon>
-            <mdui-button-icon icon="refresh" onclick="autoLogin()" tooltip="刷新Token"></mdui-button-icon>
+            <mdui-tooltip content="订单列表">
+                <mdui-button-icon icon="list_alt" onclick="openOrderDrawer()"></mdui-button-icon>
+            </mdui-tooltip>
+            <mdui-tooltip content="API与推送设置">
+                <mdui-button-icon icon="settings" onclick="openConfigDialog()"></mdui-button-icon>
+            </mdui-tooltip>
+            <mdui-tooltip content="刷新Token">
+                <mdui-button-icon icon="refresh" onclick="autoLogin()"></mdui-button-icon>
+            </mdui-tooltip>
         </div>
     </div>
 
@@ -673,7 +679,9 @@
             <div class="config-payload-toolbar">
                 <div style="font-size: 14px; color: rgb(var(--mdui-color-primary)); font-weight: bold;">Login Payload
                     (Code)</div>
-                <mdui-button-icon icon="add" onclick="addPayloadEntry()" tooltip="新增门店Payload"></mdui-button-icon>
+                <mdui-tooltip content="新增门店Payload">
+                    <mdui-button-icon icon="add" onclick="addPayloadEntry()"></mdui-button-icon>
+                </mdui-tooltip>
             </div>
             <div id="payloadList" class="payload-list"></div>
 
@@ -1205,8 +1213,12 @@
                             ${`门店 ${index + 1}`}
                         </mdui-radio>
                         <div class="payload-item-actions">
-                            <mdui-button-icon icon="verified" tooltip="验证" onclick="validatePayloadEntry(${index})"></mdui-button-icon>
-                            <mdui-button-icon icon="delete" tooltip="删除" style="color: rgb(var(--mdui-color-error));" ${storePayloads.length <= 1 ? 'disabled' : ''} onclick="removePayloadEntry(${index})"></mdui-button-icon>
+                            <mdui-tooltip content="验证">
+                                <mdui-button-icon icon="verified" onclick="validatePayloadEntry(${index})"></mdui-button-icon>
+                            </mdui-tooltip>
+                            <mdui-tooltip content="删除">
+                                <mdui-button-icon icon="delete" style="color: rgb(var(--mdui-color-error));" ${storePayloads.length <= 1 ? 'disabled' : ''} onclick="removePayloadEntry(${index})"></mdui-button-icon>
+                            </mdui-tooltip>
                         </div>
                     </div>
                     <mdui-text-field
