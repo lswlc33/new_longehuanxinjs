@@ -613,8 +613,8 @@
             </div>
 
             <div class="drawer-search">
-                <mdui-text-field id="orderSearchMobile" icon="search" placeholder="手机号或订单号" variant="outlined"
-                    clearable style="flex: 1;" onkeydown="if(event.key==='Enter') fetchOrders()"></mdui-text-field>
+                <mdui-text-field id="orderSearchMobile" icon="search" placeholder="手机号或订单号" variant="outlined" clearable
+                    style="flex: 1;" onkeydown="if(event.key==='Enter') fetchOrders()"></mdui-text-field>
                 <mdui-button variant="filled" onclick="fetchOrders()">搜索</mdui-button>
             </div>
 
@@ -683,7 +683,8 @@
             </div>
             <mdui-text-field id="configDingWebhook" label="钉钉 Webhook" variant="outlined" clearable
                 style="margin-bottom: 16px;"></mdui-text-field>
-            <mdui-text-field id="configDingSecret" label="钉钉加签密钥 (Token/Secret)" variant="outlined" clearable></mdui-text-field>
+            <mdui-text-field id="configDingSecret" label="钉钉加签密钥 (Token/Secret)" variant="outlined"
+                clearable></mdui-text-field>
             <div style="margin-top: 12px; text-align: right;">
                 <mdui-button variant="tonal" onclick="testDingTalk()" icon="send">测试钉钉消息</mdui-button>
             </div>
@@ -731,8 +732,9 @@
                 <span class="section-title">智能填充</span>
                 <mdui-button variant="tonal" class="btn-small" onclick="smartParse()">智能识别</mdui-button>
             </div>
-            <mdui-text-field id="smartInput" variant="outlined" clearable
-                placeholder="在此粘贴：130xxxxx30 南夏墅街道 城市大厦A座1102"></mdui-text-field>
+            <mdui-text-field rows="2" id="smartInput" variant="outlined" clearable
+                placeholder="在此粘贴：
+手机号 区 街道 小区门牌"></mdui-text-field>
         </mdui-card>
 
         <mdui-card variant="filled">
@@ -777,7 +779,8 @@
             <div class="section-header">
                 <span class="section-title">商品信息</span>
             </div>
-            <mdui-text-field id="goodsCode" label="商品编号" variant="outlined" clearable onblur="queryGoodsInfo()"></mdui-text-field>
+            <mdui-text-field id="goodsCode" label="商品编号" variant="outlined" clearable
+                onblur="queryGoodsInfo()"></mdui-text-field>
             <mdui-text-field id="goodsName" label="商品名称" placeholder="自动计算" variant="outlined"
                 readonly></mdui-text-field>
             <div class="row">
@@ -1975,6 +1978,14 @@
             if (!raw.trim()) return mdui.snackbar({ message: "请先输入文本" });
             if (!Object.keys(regionTree).length) return mdui.snackbar({ message: "地址库未加载" });
 
+            const escapeRegExp = (str = "") => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            const normalizeName = (name = "") => name.replace(/[市区县]$/, "");
+            const hasToken = (text, fullName) => {
+                if (!fullName) return false;
+                const simple = normalizeName(fullName);
+                return text.includes(fullName) || (simple.length >= 2 && text.includes(simple));
+            };
+
             let mobile = "";
             const phoneMatch = raw.match(/1[3-9]\d{9}/);
             if (phoneMatch) {
@@ -1985,25 +1996,61 @@
 
             let matched = { city: "", dist: "", townCode: "", townName: "" };
 
-            searchLoop:
+            const townCandidates = [];
             for (const cKey in regionTree) {
                 for (const dKey in regionTree[cKey]) {
-                    const towns = regionTree[cKey][dKey];
-                    const tMatch = towns.find(t => raw.includes(t.text));
-                    if (tMatch) {
-                        matched = { city: cKey, dist: dKey, townCode: tMatch.value, townName: tMatch.text };
-                        break searchLoop;
-                    }
-                    const simpleD = dKey.replace(/[区市县]$/, '');
-                    if (raw.includes(dKey) || (simpleD.length >= 2 && raw.includes(simpleD))) {
-                        if (!matched.city) { matched.city = cKey; matched.dist = dKey; }
+                    const towns = regionTree[cKey][dKey] || [];
+                    for (const t of towns) {
+                        if (t?.text && raw.includes(t.text)) {
+                            let score = 10;
+                            if (raw.includes(dKey)) score += 6;
+                            else if (hasToken(raw, dKey)) score += 4;
+                            if (raw.includes(cKey)) score += 3;
+                            else if (hasToken(raw, cKey)) score += 2;
+
+                            townCandidates.push({
+                                city: cKey,
+                                dist: dKey,
+                                townCode: t.value,
+                                townName: t.text,
+                                score
+                            });
+                        }
                     }
                 }
-                if (!matched.city) {
-                    const simpleC = cKey.replace(/市$/, '');
-                    if (raw.includes(cKey) || (simpleC.length >= 2 && raw.includes(simpleC))) {
-                        matched.city = cKey;
-                        break;
+            }
+
+            if (townCandidates.length) {
+                townCandidates.sort((a, b) => {
+                    if (b.score !== a.score) return b.score - a.score;
+                    if (b.townName.length !== a.townName.length) return b.townName.length - a.townName.length;
+                    return 0;
+                });
+                matched = townCandidates[0];
+            } else {
+                let bestDistrict = null;
+                for (const cKey in regionTree) {
+                    for (const dKey in regionTree[cKey]) {
+                        if (hasToken(raw, dKey)) {
+                            let score = 6;
+                            if (raw.includes(dKey)) score += 2;
+                            if (hasToken(raw, cKey)) score += 2;
+                            if (!bestDistrict || score > bestDistrict.score) {
+                                bestDistrict = { city: cKey, dist: dKey, score };
+                            }
+                        }
+                    }
+                }
+
+                if (bestDistrict) {
+                    matched.city = bestDistrict.city;
+                    matched.dist = bestDistrict.dist;
+                } else {
+                    for (const cKey in regionTree) {
+                        if (hasToken(raw, cKey)) {
+                            matched.city = cKey;
+                            break;
+                        }
                     }
                 }
             }
@@ -2021,13 +2068,27 @@
                 mdui.snackbar({ message: "未识别到地址信息" });
             }
 
-            const addr = raw.replace(mobile, "")
-                .replace(matched.townName, "")
-                .replace(matched.dist, "")
-                .replace(matched.city, "")
-                .replace(/[区市县]$/, "")
-                .replace(/[,，。;；\n、]/g, " ")
-                .replace(/\s+/g, " ")
+            let addr = raw;
+            if (mobile) addr = addr.replace(new RegExp(escapeRegExp(mobile), "g"), "");
+            if (matched.townName) addr = addr.replace(new RegExp(escapeRegExp(matched.townName), "g"), "");
+            if (matched.dist) {
+                addr = addr.replace(new RegExp(escapeRegExp(matched.dist), "g"), "");
+                const simpleDist = normalizeName(matched.dist);
+                if (simpleDist.length >= 2 && simpleDist !== matched.dist) {
+                    addr = addr.replace(new RegExp(escapeRegExp(simpleDist), "g"), "");
+                }
+            }
+            if (matched.city) {
+                addr = addr.replace(new RegExp(escapeRegExp(matched.city), "g"), "");
+                const simpleCity = normalizeName(matched.city);
+                if (simpleCity.length >= 2 && simpleCity !== matched.city) {
+                    addr = addr.replace(new RegExp(escapeRegExp(simpleCity), "g"), "");
+                }
+            }
+
+            addr = addr
+                .replace(/^[\s\-—_,，。;；、\/]+/, "")
+                .replace(/[\s\-—_,，。;；、\/]+/g, " ")
                 .trim();
 
             document.querySelector('#detailAddress').value = addr;
