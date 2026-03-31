@@ -583,6 +583,14 @@
             margin: 10px auto;
             display: block;
         }
+
+        .footer-info {
+            width: 100%;
+            box-sizing: border-box;
+            text-align: center;
+            font-size: 12px;
+            color: rgb(var(--mdui-color-outline));
+        }
     </style>
 </head>
 
@@ -812,6 +820,8 @@
             <mdui-text-field id="sncode" label="SN码" variant="outlined" clearable></mdui-text-field>
         </mdui-card>
     </div>
+
+    <div class="footer-info">版本号：V260331.3</div>
 
     <mdui-fab class="fab-submit" icon="check" variant="primary" extended onclick="submitOrder()">立即提交</mdui-fab>
 
