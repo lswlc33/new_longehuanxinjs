@@ -836,9 +836,18 @@
         let currentQrOrderNumber = "";
         let regionTree = {};
 
-        let orderPollQueue = {};
+        const ORDER_QUEUE_KEY = "ORDER_QUEUE_BY_STORE_V1";
+        const ORDER_PUSH_SENT_KEY = "ORDER_PUSH_SENT_V1";
+        const ORDER_TERMINAL_STATES = [2, 3, 4, 5, 6];
+        const ORDER_POLL_INTERVAL_MS = 5000;
+        const ORDER_QUEUE_TTL_MS = 24 * 60 * 60 * 1000;
+        const PUSH_SENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+        let orderQueueByStore = { version: 1, updatedAt: 0, stores: {} };
+        let orderPushSentMap = {};
         let pollTimeoutId = null;
-        let pendingOrderMobiles = {};
+        let isPolling = false;
+        let isCheckingOrders = false;
 
         let storePayloads = [];
         let currentStoreIndex = 0;
@@ -866,8 +875,242 @@
             qrLoading: document.querySelector('#qrLoading')
         };
 
+        function safeParseJSON(raw, fallback) {
+            try {
+                return JSON.parse(raw);
+            } catch (_) {
+                return fallback;
+            }
+        }
+
+        function getCurrentStoreKey() {
+            return `store_${currentStoreIndex}`;
+        }
+
+        function parseStoreIndexFromKey(storeKey = "") {
+            const match = String(storeKey).match(/^store_(\d+)$/);
+            return match ? parseInt(match[1], 10) : -1;
+        }
+
+        function loadOrderQueue() {
+            const raw = localStorage.getItem(ORDER_QUEUE_KEY);
+            const parsed = raw ? safeParseJSON(raw, null) : null;
+            if (parsed && parsed.stores && typeof parsed.stores === "object") {
+                orderQueueByStore = {
+                    version: 1,
+                    updatedAt: parsed.updatedAt || Date.now(),
+                    stores: parsed.stores
+                };
+            } else {
+                orderQueueByStore = { version: 1, updatedAt: Date.now(), stores: {} };
+            }
+        }
+
+        function saveOrderQueue() {
+            orderQueueByStore.updatedAt = Date.now();
+            localStorage.setItem(ORDER_QUEUE_KEY, JSON.stringify(orderQueueByStore));
+        }
+
+        function loadOrderPushSentMap() {
+            const raw = localStorage.getItem(ORDER_PUSH_SENT_KEY);
+            orderPushSentMap = raw ? safeParseJSON(raw, {}) : {};
+            if (!orderPushSentMap || typeof orderPushSentMap !== "object") {
+                orderPushSentMap = {};
+            }
+        }
+
+        function saveOrderPushSentMap() {
+            localStorage.setItem(ORDER_PUSH_SENT_KEY, JSON.stringify(orderPushSentMap));
+        }
+
+        function cleanupOrderPushSentMap() {
+            const now = Date.now();
+            Object.keys(orderPushSentMap).forEach(key => {
+                if (now - (orderPushSentMap[key] || 0) > PUSH_SENT_TTL_MS) {
+                    delete orderPushSentMap[key];
+                }
+            });
+            saveOrderPushSentMap();
+        }
+
+        function cleanupOrderQueue() {
+            const now = Date.now();
+            const stores = orderQueueByStore.stores || {};
+
+            Object.keys(stores).forEach(storeKey => {
+                const bucket = stores[storeKey];
+                const orders = bucket?.orders || {};
+
+                Object.keys(orders).forEach(orderNumber => {
+                    const item = orders[orderNumber] || {};
+                    const lastTouch = item.lastCheckAt || item.createdAt || 0;
+
+                    if (!lastTouch || now - lastTouch > ORDER_QUEUE_TTL_MS) {
+                        delete orders[orderNumber];
+                    }
+                });
+
+                if (Object.keys(orders).length === 0) {
+                    delete stores[storeKey];
+                }
+            });
+
+            saveOrderQueue();
+        }
+
+        function ensureStoreQueueBucket(storeKey) {
+            if (!orderQueueByStore.stores[storeKey]) {
+                orderQueueByStore.stores[storeKey] = { orders: {} };
+            } else if (!orderQueueByStore.stores[storeKey].orders) {
+                orderQueueByStore.stores[storeKey].orders = {};
+            }
+            return orderQueueByStore.stores[storeKey];
+        }
+
+        function enqueueOrder(storeKey, orderNumber, meta = {}) {
+            const bucket = ensureStoreQueueBucket(storeKey);
+            bucket.orders[orderNumber] = {
+                lastState: Number(meta.lastState ?? 0),
+                buyerMobile: meta.buyerMobile || "",
+                createdAt: meta.createdAt || Date.now(),
+                lastCheckAt: meta.lastCheckAt || 0
+            };
+            saveOrderQueue();
+        }
+
+        function dequeueOrder(storeKey, orderNumber) {
+            const bucket = orderQueueByStore.stores[storeKey];
+            if (!bucket?.orders?.[orderNumber]) return;
+            delete bucket.orders[orderNumber];
+            if (Object.keys(bucket.orders).length === 0) {
+                delete orderQueueByStore.stores[storeKey];
+            }
+            saveOrderQueue();
+        }
+
+        function getAllQueuedOrders() {
+            const list = [];
+            Object.keys(orderQueueByStore.stores || {}).forEach(storeKey => {
+                const orders = orderQueueByStore.stores[storeKey]?.orders || {};
+                Object.keys(orders).forEach(orderNumber => {
+                    list.push({
+                        storeKey,
+                        orderNumber,
+                        item: orders[orderNumber]
+                    });
+                });
+            });
+            return list;
+        }
+
+        function hasQueuedOrders() {
+            return getAllQueuedOrders().length > 0;
+        }
+
+        function makePushSentKey(storeKey, orderNumber, tag = "PAID") {
+            return `${storeKey}|${orderNumber}|${tag}`;
+        }
+
+        function isOrderPushed(storeKey, orderNumber, tag = "PAID") {
+            return !!orderPushSentMap[makePushSentKey(storeKey, orderNumber, tag)];
+        }
+
+        function markOrderPushed(storeKey, orderNumber, tag = "PAID") {
+            orderPushSentMap[makePushSentKey(storeKey, orderNumber, tag)] = Date.now();
+            saveOrderPushSentMap();
+        }
+
+        async function callApiWithToken(token, endpoint, method = 'GET', data = null) {
+            const headers = {
+                "Content-Type": "application/json",
+                token
+            };
+
+            let url = `${LONGE_API_BASE}${endpoint}`;
+            const options = { method, headers };
+
+            if (method === 'GET' && data) {
+                url += `?${new URLSearchParams(data).toString()}`;
+            } else if (method !== 'GET' && data !== null && data !== undefined) {
+                options.body = JSON.stringify(data);
+            }
+
+            try {
+                const response = await fetch(url, options);
+                return await response.json();
+            } catch (error) {
+                console.error("API Error:", error);
+                return null;
+            }
+        }
+
+        async function getTokenForStoreKey(storeKey) {
+            const storeIndex = parseStoreIndexFromKey(storeKey);
+            const store = storePayloads[storeIndex];
+            if (!store?.payload?.trim()) return "";
+
+            if (storeIndex === currentStoreIndex && currentToken) {
+                return currentToken;
+            }
+
+            const tokenRes = await requestTokenByPayload(store.payload.trim());
+            if (tokenRes?.code === 0 && tokenRes.data) {
+                return tokenRes.data;
+            }
+
+            return "";
+        }
+
+        function stopPolling() {
+            if (pollTimeoutId) {
+                clearTimeout(pollTimeoutId);
+                pollTimeoutId = null;
+            }
+            isPolling = false;
+        }
+
+        function scheduleNextPolling() {
+            if (pollTimeoutId) clearTimeout(pollTimeoutId);
+            pollTimeoutId = setTimeout(() => pollOrderStatus("interval"), ORDER_POLL_INTERVAL_MS);
+            isPolling = true;
+        }
+
+        async function checkNowAndEnsurePolling(reason = "manual") {
+            await pollOrderStatus(reason);
+            if (hasQueuedOrders()) {
+                scheduleNextPolling();
+            } else {
+                stopPolling();
+            }
+        }
+
+        function bindLifecycleRecoveryEvents() {
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    checkNowAndEnsurePolling("visibilitychange");
+                }
+            });
+
+            window.addEventListener('pageshow', () => {
+                checkNowAndEnsurePolling("pageshow");
+            });
+
+            window.addEventListener('focus', () => {
+                checkNowAndEnsurePolling("focus");
+            });
+
+            window.addEventListener('online', () => {
+                checkNowAndEnsurePolling("online");
+            });
+        }
+
         window.addEventListener('load', () => {
             initializeStorePayloads();
+            loadOrderQueue();
+            cleanupOrderQueue();
+            loadOrderPushSentMap();
+            cleanupOrderPushSentMap();
+            bindLifecycleRecoveryEvents();
 
             dingTalkWebhook = localStorage.getItem(DINGTALK_WEBHOOK_KEY) || "";
             dingTalkSecret = localStorage.getItem(DINGTALK_SECRET_KEY) || "";
@@ -882,6 +1125,10 @@
 
             renderShopSwitchMenu();
             initOrderFilterChips();
+
+            if (hasQueuedOrders()) {
+                checkNowAndEnsurePolling("boot");
+            }
         });
 
         function initializeStorePayloads() {
@@ -1246,59 +1493,84 @@
             ].join("\n");
         }
 
-        async function pollOrderStatus() {
-            const queueKeys = Object.keys(orderPollQueue);
-            if (queueKeys.length === 0) {
-                pollTimeoutId = null;
+        async function pollOrderStatus(triggerReason = "interval") {
+            if (isCheckingOrders) return;
+            if (!hasQueuedOrders()) {
+                stopPolling();
                 return;
             }
 
+            isCheckingOrders = true;
+
             try {
-                for (const orderNum of queueKeys) {
-                    const res = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber: orderNum });
-                    if (res?.code === 0 && res.data?.payOrder) {
-                        const order = res.data.payOrder;
-                        const newState = order.payState;
-                        const oldState = orderPollQueue[orderNum];
+                const tokenCache = {};
+                const queuedOrders = getAllQueuedOrders();
 
-                        if (newState !== oldState) {
-                            orderPollQueue[orderNum] = newState;
+                for (const entry of queuedOrders) {
+                    const { storeKey, orderNumber } = entry;
+                    const latestItem = orderQueueByStore.stores?.[storeKey]?.orders?.[orderNumber];
+                    if (!latestItem) continue;
 
-                            if (newState === 2) {
-                                showNotification("订单支付成功", `订单号尾号: ${orderNum.slice(-4)}\n状态: 已付款`);
+                    if (!tokenCache[storeKey]) {
+                        tokenCache[storeKey] = await getTokenForStoreKey(storeKey);
+                    }
+
+                    const token = tokenCache[storeKey];
+                    if (!token) continue;
+
+                    const res = await callApiWithToken(token, '/salesuser/getSalesOrderDetail', 'GET', { orderNumber });
+                    if (!(res?.code === 0 && res.data?.payOrder)) continue;
+
+                    const order = res.data.payOrder;
+                    const newState = Number(order.payState);
+                    const oldState = Number(latestItem.lastState ?? 0);
+
+                    latestItem.lastState = newState;
+                    latestItem.lastCheckAt = Date.now();
+                    saveOrderQueue();
+
+                    if (newState !== oldState) {
+                        if (newState === 2) {
+                            showNotification("订单支付成功", `订单号尾号: ${orderNumber.slice(-4)}\n状态: 已付款`);
+                        }
+
+                        if (ORDER_TERMINAL_STATES.includes(newState)) {
+                            if (newState === 2 && !isOrderPushed(storeKey, orderNumber, "PAID")) {
+                                if (els.qrDialog.open && currentQrOrderNumber === orderNumber) {
+                                    els.qrDialog.open = false;
+                                    mdui.snackbar({ message: "付款成功！" });
+                                }
+
+                                const msg = buildDingTalkOrderMessage(order, latestItem.buyerMobile || "");
+                                await sendDingTalkMessage(msg);
+                                markOrderPushed(storeKey, orderNumber, "PAID");
                             }
 
-                            if ([2, 3, 4, 5, 6].includes(newState)) {
-                                delete orderPollQueue[orderNum];
+                            dequeueOrder(storeKey, orderNumber);
 
-                                if (newState === 2) {
-                                    if (els.qrDialog.open && currentQrOrderNumber === orderNum) {
-                                        els.qrDialog.open = false;
-                                        mdui.snackbar({ message: "付款成功！" });
-                                    }
-
-                                    const msg = buildDingTalkOrderMessage(order, pendingOrderMobiles[orderNum]);
-                                    sendDingTalkMessage(msg);
-                                    delete pendingOrderMobiles[orderNum];
-                                }
-
-                                if (document.getElementById('orderDrawer').open) {
-                                    fetchOrders();
-                                }
+                            if (document.getElementById('orderDrawer').open) {
+                                fetchOrders();
                             }
                         }
                     }
                 }
             } catch (e) {
-                console.error("轮询异常:", e);
+                console.error(`轮询异常(${triggerReason}):`, e);
+            } finally {
+                isCheckingOrders = false;
             }
 
-            pollTimeoutId = setTimeout(pollOrderStatus, 1000);
+            if (hasQueuedOrders()) {
+                scheduleNextPolling();
+            } else {
+                stopPolling();
+            }
         }
 
         function startPolling() {
-            if (!pollTimeoutId) {
-                pollTimeoutId = setTimeout(pollOrderStatus, 1000);
+            if (!hasQueuedOrders()) return;
+            if (!isPolling) {
+                scheduleNextPolling();
             }
         }
 
@@ -1963,10 +2235,17 @@
             if (res?.code === 0) {
                 mdui.snackbar({ message: "订单提交成功！" });
                 if (res.data) {
-                    pendingOrderMobiles[res.data] = mobile;
                     openQrDialog(res.data);
-                    orderPollQueue[res.data] = 0;
-                    startPolling();
+
+                    const storeKey = getCurrentStoreKey();
+                    enqueueOrder(storeKey, res.data, {
+                        lastState: 0,
+                        buyerMobile: mobile,
+                        createdAt: Date.now(),
+                        lastCheckAt: 0
+                    });
+
+                    checkNowAndEnsurePolling("submitOrder");
                 }
             } else {
                 showError(res?.msg || "提交失败");
