@@ -1,4 +1,5 @@
-﻿<!DOCTYPE html>
+﻿
+<!DOCTYPE html>
 <html lang="zh-CN" class="mdui-theme-auto">
 
 <head>
@@ -590,7 +591,62 @@
             text-align: center;
             font-size: 12px;
             color: rgb(var(--mdui-color-outline));
+            cursor: pointer;
+            padding: 12px 0;
         }
+
+        /* 调试日志面板样式 */
+        .debug-log-panel {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 40vh;
+            background: rgb(var(--mdui-color-surface-container-high));
+            z-index: 2000;
+            border-top: 1px solid rgba(var(--mdui-color-outline), 0.2);
+            display: none;
+            flex-direction: column;
+            box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        .debug-log-panel.open {
+            display: flex;
+        }
+
+        .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 16px;
+            background: rgb(var(--mdui-color-surface-container));
+            border-bottom: 1px solid rgba(var(--mdui-color-outline), 0.1);
+        }
+
+        .log-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px 16px;
+            font-family: 'Roboto Mono', 'Courier New', monospace;
+            font-size: 11px;
+            white-space: pre-wrap;
+            line-height: 1.4;
+        }
+
+        .log-entry {
+            margin-bottom: 4px;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+            padding-bottom: 2px;
+        }
+
+        .log-time {
+            color: rgb(var(--mdui-color-outline));
+            margin-right: 8px;
+        }
+
+        .log-level-info { color: rgb(var(--mdui-color-on-surface-variant)); }
+        .log-level-warn { color: #e65100; font-weight: bold; }
+        .log-level-error { color: rgb(var(--mdui-color-error)); font-weight: bold; }
     </style>
 </head>
 
@@ -821,9 +877,21 @@
         </mdui-card>
     </div>
 
-    <div class="footer-info">版本号：V260331.3</div>
+    <div class="footer-info" id="versionTrigger" onclick="handleVersionClick()">版本号：V260331.3</div>
 
     <mdui-fab class="fab-submit" icon="check" variant="primary" extended onclick="submitOrder()">立即提交</mdui-fab>
+
+    <!-- 日志面板 -->
+    <div id="debugLogPanel" class="debug-log-panel">
+        <div class="log-header">
+            <span style="font-weight: bold; color: rgb(var(--mdui-color-primary));">调试日志</span>
+            <div style="display: flex; gap: 8px;">
+                <mdui-button variant="text" size="small" onclick="clearDebugLogs()">清空</mdui-button>
+                <mdui-button-icon icon="close" size="small" onclick="toggleLogPanel(false)"></mdui-button-icon>
+            </div>
+        </div>
+        <div id="debugLogContent" class="log-content"></div>
+    </div>
 
     <script>
         const LONGE_API_BASE = "https://www.longehuanxinjs.com/ccb_equity_api_new";
@@ -869,6 +937,61 @@
 
         let storePayloads = [];
         let currentStoreIndex = 0;
+
+        // --- 调试日志面板逻辑 ---
+        let versionClickCount = 0;
+        let versionClickTimer = null;
+
+        function handleVersionClick() {
+            versionClickCount++;
+            clearTimeout(versionClickTimer);
+            if (versionClickCount >= 5) {
+                toggleLogPanel();
+                versionClickCount = 0;
+            }
+            versionClickTimer = setTimeout(() => { versionClickCount = 0; }, 1200);
+        }
+
+        function toggleLogPanel(show) {
+            const panel = document.getElementById('debugLogPanel');
+            const isCurrentlyOpen = panel.classList.contains('open');
+            const shouldOpen = show !== undefined ? show : !isCurrentlyOpen;
+            
+            if (shouldOpen) {
+                panel.classList.add('open');
+                addLog("已开启调试日志面板", "info");
+            } else {
+                panel.classList.remove('open');
+            }
+        }
+
+        function addLog(msg, level = 'info') {
+            const container = document.getElementById('debugLogContent');
+            const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+            
+            const logEl = document.createElement('div');
+            logEl.className = `log-entry log-level-${level}`;
+            logEl.innerHTML = `<span class="log-time">[${time}]</span>${msg}`;
+            
+            container.appendChild(logEl);
+            container.scrollTop = container.scrollHeight;
+            
+            // 限制条数
+            if (container.children.length > 300) {
+                container.removeChild(container.firstChild);
+            }
+            
+            // 同步输出到控制台
+            if (level === 'error') console.error(`[${time}] ${msg}`);
+            else if (level === 'warn') console.warn(`[${time}] ${msg}`);
+            else console.log(`[${time}] ${msg}`);
+        }
+
+        function clearDebugLogs() {
+            document.getElementById('debugLogContent').innerHTML = '';
+            addLog("日志已清空", "info");
+        }
+        // --- 调试日志结束 ---
 
         const els = {
             city: document.querySelector('#citySelect'),
@@ -986,6 +1109,7 @@
         }
 
         function enqueueOrder(storeKey, orderNumber, meta = {}) {
+            addLog(`订单[${orderNumber}]入队轮询，所属门店[${storeKey}]`, "info");
             const bucket = ensureStoreQueueBucket(storeKey);
             bucket.orders[orderNumber] = {
                 lastState: Number(meta.lastState ?? 0),
@@ -997,6 +1121,7 @@
         }
 
         function dequeueOrder(storeKey, orderNumber) {
+            addLog(`订单[${orderNumber}]出队（已达终态或手动移除）`, "info");
             const bucket = orderQueueByStore.stores[storeKey];
             if (!bucket?.orders?.[orderNumber]) return;
             delete bucket.orders[orderNumber];
@@ -1055,9 +1180,13 @@
 
             try {
                 const response = await fetch(url, options);
-                return await response.json();
+                const result = await response.json();
+                if (result.code !== 0) {
+                    addLog(`接口响应异常[${endpoint}]: ${result.msg}`, "warn");
+                }
+                return result;
             } catch (error) {
-                console.error("API Error:", error);
+                addLog(`网络请求失败[${endpoint}]: ${error.message}`, "error");
                 return null;
             }
         }
@@ -1071,6 +1200,7 @@
                 return currentToken;
             }
 
+            addLog(`正在为[${storeKey}]后台换取Token...`, "info");
             const tokenRes = await requestTokenByPayload(store.payload.trim());
             if (tokenRes?.code === 0 && tokenRes.data) {
                 return tokenRes.data;
@@ -1081,6 +1211,7 @@
 
         function stopPolling() {
             if (pollTimeoutId) {
+                addLog("停止轮询服务", "info");
                 clearTimeout(pollTimeoutId);
                 pollTimeoutId = null;
             }
@@ -1105,6 +1236,7 @@
         function bindLifecycleRecoveryEvents() {
             document.addEventListener('visibilitychange', () => {
                 if (document.visibilityState === 'visible') {
+                    addLog("浏览器回到前台，恢复检查", "info");
                     checkNowAndEnsurePolling("visibilitychange");
                 }
             });
@@ -1118,6 +1250,7 @@
             });
 
             window.addEventListener('online', () => {
+                addLog("网络已恢复", "info");
                 checkNowAndEnsurePolling("online");
             });
         }
@@ -1145,6 +1278,7 @@
             initOrderFilterChips();
 
             if (hasQueuedOrders()) {
+                addLog(`启动自动检查，待检订单数: ${getAllQueuedOrders().length}`, "info");
                 checkNowAndEnsurePolling("boot");
             }
         });
@@ -1356,7 +1490,7 @@
                 });
                 return await response.json();
             } catch (error) {
-                console.error("Token请求异常:", error);
+                addLog("Token请求异常: " + error.message, "error");
                 return null;
             }
         }
@@ -1372,7 +1506,7 @@
                 });
                 return await response.json();
             } catch (error) {
-                console.error("门店信息请求异常:", error);
+                addLog("门店信息请求异常: " + error.message, "error");
                 return null;
             }
         }
@@ -1386,16 +1520,19 @@
                 return mdui.snackbar({ message: `门店${index + 1} 的 Payload 不能为空` });
             }
 
+            addLog(`正在验证门店${index + 1} 的Payload...`, "info");
             mdui.snackbar({ message: `正在验证 ${store.name || `门店${index + 1}`}` });
             const tokenRes = await requestTokenByPayload(payloadText);
 
             if (!(tokenRes?.code === 0 && tokenRes.data)) {
+                addLog(`验证失败: Token获取失败`, "error");
                 return showError(`验证失败：${tokenRes?.msg || 'Token获取失败'}`);
             }
 
             const shopRes = await requestShopInfoByToken(tokenRes.data);
             if (shopRes?.code === 0) {
                 const shopName = shopRes.data?.shopInfo?.shopName || store.name || `门店${index + 1}`;
+                addLog(`验证成功: ${shopName}`, "info");
                 store.shopName = shopName;
                 store.name = shopName;
                 store.verified = true;
@@ -1405,6 +1542,7 @@
                 updateShopNameDisplay();
                 mdui.snackbar({ message: `验证成功：${shopName}` });
             } else {
+                addLog(`验证失败: ${shopRes?.msg || '无法解析门店信息'}`, "error");
                 showError(`验证失败：${shopRes?.msg || '门店信息获取失败'}`);
             }
         }
@@ -1424,9 +1562,13 @@
 
             try {
                 const response = await fetch(url, options);
-                return await response.json();
+                const res = await response.json();
+                if (res.code !== 0) {
+                    addLog(`API [${endpoint}] 返回业务错误: ${res.msg}`, "warn");
+                }
+                return res;
             } catch (error) {
-                console.error("API Error:", error);
+                addLog(`API [${endpoint}] 请求崩溃: ${error.message}`, "error");
                 showError("网络请求失败或跨域被拦截");
                 return null;
             }
@@ -1442,10 +1584,11 @@
             const secret = overrideSecret !== undefined ? overrideSecret : dingTalkSecret;
 
             if (!accessToken) {
-                console.warn("未配置钉钉Webhook，跳过推送");
+                addLog("未配置钉钉Webhook，忽略推送请求", "warn");
                 return;
             }
 
+            addLog("发起钉钉消息推送...", "info");
             try {
                 const response = await fetch(DINGTALK_API_BASE, {
                     method: 'POST',
@@ -1459,13 +1602,13 @@
 
                 const resData = await response.json();
                 if (resData.errcode === 0 || resData.code === 0) {
-                    console.log("钉钉推送成功");
+                    addLog("钉钉推送成功响应", "info");
                 } else {
-                    console.error("钉钉推送返回错误:", resData);
+                    addLog(`钉钉推送返回错误: ${resData.errmsg || resData.msg}`, "error");
                     mdui.snackbar({ message: "钉钉推送失败: " + (resData.errmsg || resData.msg || "未知错误") });
                 }
             } catch (error) {
-                console.error("钉钉推送异常:", error);
+                addLog("钉钉推送网络异常: " + error.message, "error");
                 mdui.snackbar({ message: "钉钉推送异常，请检查后端服务" });
             }
         }
@@ -1523,6 +1666,7 @@
             }
 
             isCheckingOrders = true;
+            addLog(`启动轮询[原因:${triggerReason}]，当前队列订单数: ${getAllQueuedOrders().length}`, "info");
 
             try {
                 const tokenCache = {};
@@ -1538,7 +1682,10 @@
                     }
 
                     const token = tokenCache[storeKey];
-                    if (!token) continue;
+                    if (!token) {
+                        addLog(`无法获取门店[${storeKey}]的Token，跳过单号[${orderNumber}]`, "warn");
+                        continue;
+                    }
 
                     const res = await callApiWithToken(token, '/salesuser/getSalesOrderDetail', 'GET', { orderNumber });
                     if (!(res?.code === 0 && res.data?.payOrder)) continue;
@@ -1552,6 +1699,8 @@
                     saveOrderQueue();
 
                     if (newState !== oldState) {
+                        addLog(`订单[${orderNumber}]状态变更: ${payStates[oldState] || '未知'} -> ${payStates[newState] || '未知'}`, "info");
+                        
                         if (newState === 2) {
                             showNotification("订单支付成功", `订单号尾号: ${orderNumber.slice(-4)}\n状态: 已付款`);
                         }
@@ -1563,6 +1712,7 @@
                                     mdui.snackbar({ message: "付款成功！" });
                                 }
 
+                                addLog(`订单[${orderNumber}]支付完成，准备发起推送`, "info");
                                 const msg = buildDingTalkOrderMessage(order, latestItem.buyerMobile || "");
                                 await sendDingTalkMessage(msg);
                                 markOrderPushed(storeKey, orderNumber, "PAID");
@@ -1577,7 +1727,7 @@
                     }
                 }
             } catch (e) {
-                console.error(`轮询异常(${triggerReason}):`, e);
+                addLog(`轮询核心逻辑异常: ${e.message}`, "error");
             } finally {
                 isCheckingOrders = false;
             }
@@ -1601,11 +1751,13 @@
             loginPayload = currentStore?.payload?.trim() || "";
 
             if (!loginPayload) {
+                addLog("自动登录取消: 未配置Payload", "warn");
                 updateStatus(false, "未配置Payload");
                 updateShopNameDisplay();
                 return;
             }
 
+            addLog("开始尝试自动登录...", "info");
             updateStatus(false, "正在连接...");
             updateShopNameDisplay();
 
@@ -1613,10 +1765,12 @@
             const res = await callApi('/miniUser/getToken', 'POST', payload);
 
             if (res?.code === 0 && res.data) {
+                addLog("Token 获取成功", "info");
                 currentToken = res.data;
                 await checkTokenStatus();
                 fetchRegionData();
             } else {
+                addLog(`Token 获取失败: ${res?.msg}`, "error");
                 updateStatus(false, "Token获取失败");
                 showError(`登录失败: ${res?.msg || '请检查配置'}`);
             }
@@ -1633,6 +1787,7 @@
         async function checkTokenStatus() {
             const res = await callApi('/salesuser/getSalesActivity', 'GET');
             if (res?.code === 0) {
+                addLog("Token 状态校验通过", "info");
                 updateStatus(true);
                 const shopName = res.data?.shopInfo?.shopName || "";
                 if (shopName) {
@@ -1646,6 +1801,7 @@
                     }
                 }
             } else {
+                addLog(`Token 校验失败: ${res?.msg}`, "error");
                 updateStatus(false, "Token无效");
             }
         }
@@ -1691,6 +1847,7 @@
             dingTalkWebhook = els.dingWebhookInput.value.trim();
             dingTalkSecret = els.dingSecretInput.value.trim();
 
+            addLog("用户保存配置并尝试重连", "info");
             persistStorePayloads();
             localStorage.setItem(DINGTALK_WEBHOOK_KEY, dingTalkWebhook);
             localStorage.setItem(DINGTALK_SECRET_KEY, dingTalkSecret);
@@ -1828,6 +1985,7 @@
                 return;
             }
 
+            addLog("刷新订单列表...", "info");
             container.innerHTML = '<div style="padding: 50px; text-align: center;"><mdui-circular-progress></mdui-circular-progress></div>';
 
             const filterVal = getSelectedOrderFilterValue();
@@ -1848,6 +2006,7 @@
                     }
                 }
 
+                addLog(`获取到订单共 ${orders.length} 条`, "info");
                 if (!orders.length) {
                     container.innerHTML = '<div style="padding: 32px; text-align: center; color: #999;">未找到相关订单</div>';
                     return;
@@ -1895,6 +2054,7 @@
                     </div>`;
                 }).join('');
             } else {
+                addLog(`加载订单失败: ${res?.msg}`, "error");
                 container.innerHTML = `<div style="text-align: center; color: red;">加载失败: ${res?.msg || '未知错误'}</div>`;
             }
         }
@@ -1996,11 +2156,14 @@
         document.getElementById('confirmCancelBtn').addEventListener('click', async () => {
             if (!orderToCancel) return;
             els.confirmDialog.open = false;
+            addLog(`请求取消订单: ${orderToCancel}`, "info");
             const res = await callApi('/salesuser/cancelWxMiniOrder', 'POST', { shopOrderNumber: orderToCancel });
             if (res?.code === 0) {
+                addLog("订单取消成功", "info");
                 mdui.snackbar({ message: "订单取消成功！" });
                 fetchOrders();
             } else {
+                addLog(`订单取消失败: ${res?.msg}`, "error");
                 showError(res?.msg || "取消失败");
             }
             orderToCancel = "";
@@ -2012,6 +2175,7 @@
             if (!orderToRefund) return;
             els.refundDialog.open = false;
 
+            addLog(`请求发起退款: ${orderToRefund}`, "info");
             const payload = {
                 shopRefundOrderNumber: "",
                 ccbPayOrderNumber: orderToRefund,
@@ -2021,9 +2185,11 @@
             const res = await callApi('/salesuser/auditRefundOrder', 'POST', payload);
 
             if (res?.code === 0) {
+                addLog("退款请求已接受", "info");
                 mdui.snackbar({ message: "退款成功", placement: "top" });
                 fetchOrders();
             } else {
+                addLog(`退款请求失败: ${res?.msg}`, "error");
                 showError(res?.msg || "退款请求失败");
             }
             orderToRefund = "";
@@ -2055,6 +2221,7 @@
                 return mdui.snackbar({ message: "请输入正确的手机号" });
             }
 
+            addLog(`手动补发推送: ${orderToPush.shopOrderNumber} -> ${pushMobile}`, "info");
             const msg = buildDingTalkOrderMessage(orderToPush, pushMobile);
             await sendDingTalkMessage(msg);
             mdui.snackbar({ message: "推送请求已发送", placement: "top" });
@@ -2083,6 +2250,7 @@
             els.qrImage.style.display = 'none';
             els.qrImage.src = '';
 
+            addLog(`正在获取订单[${currentQrOrderNumber}]的支付二维码...`, "info");
             const res = await callApi('/salesuser/getCcbTogetherPayQrCd', 'POST', {
                 ccbPayOrderNumber: currentQrOrderNumber
             });
@@ -2095,6 +2263,7 @@
                 els.qrImage.src = src;
                 els.qrImage.style.display = 'block';
             } else {
+                addLog(`获取二维码失败: ${res?.msg}`, "error");
                 mdui.snackbar({ message: res?.msg || "获取二维码失败" });
             }
         }
@@ -2121,11 +2290,14 @@
             if (!sncode) return showError("请输入sn码");
             if (!currentToken) return showError("系统未就绪");
 
+            addLog(`查询SN码: ${sncode}`, "info");
             const res = await callApi('/salesuser/querySnState', 'GET', { snCode: sncode });
 
             if (res?.code === 0) {
+                addLog(`SN查询结果: ${res?.data.saleState}`, "info");
                 showError(res?.data.saleState + " " + res?.data.detail);
             } else {
+                addLog(`SN查询异常: ${res?.msg}`, "error");
                 showError(res?.msg || "查询无响应");
             }
         }
@@ -2135,14 +2307,17 @@
             if (!mobile) return showError("请输入手机号");
             if (!currentToken) return showError("系统未就绪");
 
+            addLog(`校验买家资格: ${mobile}`, "info");
             const res = await callApi('/salesuser/queryCustomerChannelSubsidyBalance', 'GET', { buyerMobile: mobile });
             const chips = document.querySelectorAll('#productCategoryChips mdui-chip');
 
             if (res?.code === 0) {
+                addLog(`资格查询成功，返点Code: ${res.data.countrySubsidyCateCodes || '无'}`, "info");
                 const validCodes = (res.data.countrySubsidyCateCodes || "").split(',').map(c => c.trim());
                 mdui.snackbar({ message: `查询成功`, closeable: true });
                 chips.forEach(c => c.selected = validCodes.includes(c.value));
             } else {
+                addLog(`资格查询失败: ${res?.msg}`, "error");
                 showError(res?.msg || "查询无响应");
                 chips.forEach(c => c.selected = false);
             }
@@ -2152,6 +2327,7 @@
             const code = document.querySelector('#goodsCode').value;
             if (!code || !currentToken) return;
 
+            addLog(`查询商品信息: ${code}`, "info");
             const res = await callApi('/salesuser/queryGoodsInfo', 'GET', { goodsCode: code, uniscid: "" });
             if (res?.code === 0 && res.data) {
                 document.querySelector('#goodsName').value = res.data.goodsName;
@@ -2162,6 +2338,7 @@
 
                 calcPrice();
             } else {
+                addLog(`商品[${code}]查询失败`, "error");
                 showError(`商品查询失败: ${res?.msg}`);
                 document.querySelector('#goodsName').value = "";
             }
@@ -2201,6 +2378,7 @@
 
             if (!currentToken) return showError("Token 未就绪");
 
+            addLog("开始收集表单并提交订单...", "info");
             const mobile = document.querySelector('#buyerMobile').value;
             const goodsCode = document.querySelector('#goodsCode').value;
             const shopPrice = document.querySelector('#shopPrice').value;
@@ -2253,8 +2431,10 @@
                 address: addressStr
             };
 
+            addLog(`订单详情: [${shopOrderNum}] 实付:${actual} 买家:${mobile} 地址:${addressStr.slice(0, 10)}...`, "info");
             const res = await callApi('/salesuser/addOrder', 'POST', payload);
             if (res?.code === 0) {
+                addLog(`下单成功: 建行单号为 ${res.data}`, "info");
                 mdui.snackbar({ message: "订单提交成功！" });
                 if (res.data) {
                     openQrDialog(res.data);
@@ -2270,6 +2450,7 @@
                     checkNowAndEnsurePolling("submitOrder");
                 }
             } else {
+                addLog(`提交订单失败: ${res?.msg}`, "error");
                 showError(res?.msg || "提交失败");
             }
         }
@@ -2279,6 +2460,7 @@
             if (!raw.trim()) return mdui.snackbar({ message: "请先输入文本" });
             if (!Object.keys(regionTree).length) return mdui.snackbar({ message: "地址库未加载" });
 
+            addLog("开始智能解析文本地址", "info");
             const escapeRegExp = (str = "") => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             const normalizeName = (name = "") => name.replace(/[市区县]$/, "");
             const hasToken = (text, fullName) => {
@@ -2357,6 +2539,7 @@
             }
 
             if (matched.city) {
+                addLog(`解析结果: ${matched.city}-${matched.dist}-${matched.townName}`, "info");
                 els.city.value = matched.city;
                 setTimeout(() => {
                     populateSelect(els.district, Object.keys(regionTree[matched.city]), matched.dist);
