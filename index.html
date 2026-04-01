@@ -1,5 +1,4 @@
-﻿
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN" class="mdui-theme-auto">
 
 <head>
@@ -1146,6 +1145,17 @@
             return list;
         }
 
+        // 新增：在所有门店队列中查找指定订单（用于判断是否有缓存的手机号）
+        function findOrderInQueue(orderNumber) {
+            for (const storeKey in orderQueueByStore.stores) {
+                const orders = orderQueueByStore.stores[storeKey].orders;
+                if (orders && orders[orderNumber]) {
+                    return { storeKey, item: orders[orderNumber] };
+                }
+            }
+            return null;
+        }
+
         function hasQueuedOrders() {
             return getAllQueuedOrders().length > 0;
         }
@@ -2111,6 +2121,19 @@
                     orderToPush = order;
                     detailPushBtn.style.display = 'inline-flex';
 
+                    // === 新增逻辑：检查队列中是否有该订单及缓存的手机号 ===
+                    const queuedData = findOrderInQueue(order.ccbPayOrderNumber);
+                    if (queuedData && queuedData.item && queuedData.item.buyerMobile) {
+                        detailPushBtn.innerText = "可补推送";
+                        orderToPush._cachedMobile = queuedData.item.buyerMobile;
+                        orderToPush._storeKey = queuedData.storeKey;
+                    } else {
+                        detailPushBtn.innerText = "补推送";
+                        orderToPush._cachedMobile = "";
+                        orderToPush._storeKey = "";
+                    }
+                    // ===============================================
+
                     addBtn("退款", () => {
                         dialog.open = false;
                         setTimeout(() => {
@@ -2204,6 +2227,12 @@
             els.detailDialog.open = false;
             setTimeout(() => {
                 els.pushDialog.open = true;
+                // 新增：如果有缓存的手机号，自动填入输入框
+                if (orderToPush._cachedMobile) {
+                    els.pushMobileInput.value = orderToPush._cachedMobile;
+                } else {
+                    els.pushMobileInput.value = "";
+                }
             }, 200);
         }
 
@@ -2225,6 +2254,17 @@
             const msg = buildDingTalkOrderMessage(orderToPush, pushMobile);
             await sendDingTalkMessage(msg);
             mdui.snackbar({ message: "推送请求已发送", placement: "top" });
+            
+            // === 新增逻辑：推送成功后从队列中删除并记录状态 ===
+            const storeKey = orderToPush._storeKey || getCurrentStoreKey();
+            const orderNumber = orderToPush.ccbPayOrderNumber;
+            if (orderNumber) {
+                dequeueOrder(storeKey, orderNumber);
+                markOrderPushed(storeKey, orderNumber, "PAID");
+                addLog(`已将订单[${orderNumber}]从本地轮询队列中移除`, "info");
+            }
+            // ===================================================
+
             closePushDialog();
         });
 
