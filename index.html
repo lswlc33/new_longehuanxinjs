@@ -656,6 +656,16 @@
             color: rgb(var(--mdui-color-error));
             font-weight: bold;
         }
+
+        .backup-btns {
+            display: flex;
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        .backup-btns mdui-button {
+            flex: 1;
+        }
     </style>
 </head>
 
@@ -745,6 +755,7 @@
         <mdui-button slot="action" variant="tonal" icon="refresh" onclick="refreshQrCode()">刷新</mdui-button>
     </mdui-dialog>
 
+
     <mdui-dialog id="configDialog" close-on-overlay-click>
         <span slot="headline">系统设置</span>
         <div slot="description" style="overflow-y: auto;">
@@ -785,10 +796,36 @@
                 variant="outlined" clearable style="margin-bottom: 12px;"></mdui-text-field>
             <mdui-text-field id="configAiKey" label="API Key" type="password" variant="outlined" clearable
                 style="margin-bottom: 12px;" toggle-password></mdui-text-field>
+
+            <!-- 备份分类 -->
+            <div
+                style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
+                备份与还原
+            </div>
+            <p style="margin-bottom: 12px; font-size: 12px; opacity: 0.6;">导出配置为文本以便备份或在其他设备导入。</p>
+            <div class="backup-btns">
+                <mdui-button variant="tonal" icon="file_download" onclick="exportFullConfig()">导出配置</mdui-button>
+                <mdui-button variant="tonal" icon="file_upload" onclick="importFullConfig()">导入配置</mdui-button>
+            </div>
         </div>
         <mdui-button slot="action" variant="text" onclick="closeConfigDialog()">取消</mdui-button>
         <mdui-button slot="action" variant="filled" onclick="saveConfig()">保存配置并重连</mdui-button>
     </mdui-dialog>
+
+    <!-- 导入配置专用对话框 -->
+    <mdui-dialog id="importConfigDialog" close-on-overlay-click>
+        <span slot="headline">导入系统配置</span>
+        <div slot="description">
+            <p style="margin-bottom: 12px; font-size: 13px; opacity: 0.7;">请在下方框内粘贴您之前导出的配置字符串：</p>
+            <mdui-text-field id="importConfigRawInput" label="配置内容" rows="5" variant="outlined"
+                placeholder='{"stores": [...] }'></mdui-text-field>
+        </div>
+        <mdui-button slot="action" variant="text"
+            onclick="document.getElementById('importConfigDialog').open = false">取消</mdui-button>
+        <mdui-button slot="action" variant="filled" onclick="confirmImportAction()">执行导入</mdui-button>
+    </mdui-dialog>
+
+
 
     <mdui-dialog id="errorDialog" close-on-overlay-click>
         <span slot="headline">提示</span>
@@ -900,7 +937,7 @@
         </mdui-card>
     </div>
 
-    <div class="footer-info" id="versionTrigger" onclick="handleVersionClick()">版本号：V260402.3 AI加强版</div>
+    <div class="footer-info" id="versionTrigger" onclick="handleVersionClick()">版本号：V260402.6</div>
 
     <mdui-fab class="fab-submit" icon="check" variant="primary" extended onclick="submitOrder()">立即提交</mdui-fab>
 
@@ -993,6 +1030,94 @@
         let currentStoreIndex = 0;
 
         let recentGoodsList = [];
+
+        // --- 备份与还原逻辑 (修复后的正确调用方式) ---
+        async function exportFullConfig() {
+            try {
+                const configData = {
+                    stores: storePayloads,
+                    currentIndex: currentStoreIndex,
+                    dingWebhook: localStorage.getItem(DINGTALK_WEBHOOK_KEY),
+                    dingSecret: localStorage.getItem(DINGTALK_SECRET_KEY),
+                    aiEnable: localStorage.getItem(AI_ENABLE_KEY),
+                    aiEndpoint: localStorage.getItem(AI_ENDPOINT_KEY),
+                    aiModel: localStorage.getItem(AI_MODEL_KEY),
+                    aiKey: localStorage.getItem(AI_KEY_KEY),
+                    recentGoods: localStorage.getItem(RECENT_GOODS_KEY),
+                    exportTime: new Date().toLocaleString()
+                };
+
+                const configStr = JSON.stringify(configData);
+                await navigator.clipboard.writeText(configStr);
+
+                mdui.snackbar({
+                    message: "配置已复制到剪贴板！",
+                    placement: "top"
+                });
+                addLog("执行导出配置：数据已写入剪贴板", "info");
+            } catch (err) {
+                showError("导出失败: " + err);
+                addLog("导出配置失败: " + err, "error");
+            }
+        }
+
+        /**
+         * 触发导入流程：打开对话框并清空输入
+         */
+        function importFullConfig() {
+            const importDialog = document.getElementById('importConfigDialog');
+            const inputField = document.getElementById('importConfigRawInput');
+
+            inputField.value = ""; // 清空旧数据
+            importDialog.open = true; // 打开 MDUI 对话框
+        }
+
+        /**
+         * 确认导入逻辑：解析并保存
+         */
+        function confirmImportAction() {
+            const inputField = document.getElementById('importConfigRawInput');
+            const input = inputField.value.trim();
+
+            if (!input) {
+                mdui.snackbar({ message: "请输入配置内容" });
+                return;
+            }
+
+            try {
+                const data = JSON.parse(input);
+
+                // 1. 批量写入 LocalStorage
+                if (data.stores) localStorage.setItem(STORE_PAYLOADS_KEY, JSON.stringify(data.stores));
+                if (data.currentIndex !== undefined) localStorage.setItem(CURRENT_STORE_INDEX_KEY, String(data.currentIndex));
+                if (data.dingWebhook !== undefined) localStorage.setItem(DINGTALK_WEBHOOK_KEY, data.dingWebhook || "");
+                if (data.dingSecret !== undefined) localStorage.setItem(DINGTALK_SECRET_KEY, data.dingSecret || "");
+                if (data.aiEnable !== undefined) localStorage.setItem(AI_ENABLE_KEY, String(data.aiEnable));
+                if (data.aiEndpoint !== undefined) localStorage.setItem(AI_ENDPOINT_KEY, data.aiEndpoint || "");
+                if (data.aiModel !== undefined) localStorage.setItem(AI_MODEL_KEY, data.aiModel || "");
+                if (data.aiKey !== undefined) localStorage.setItem(AI_KEY_KEY, data.aiKey || "");
+                if (data.recentGoods !== undefined) localStorage.setItem(RECENT_GOODS_KEY, data.recentGoods || "[]");
+
+                addLog("导入配置成功，准备重启应用", "info");
+
+                // 关闭对话框
+                document.getElementById('importConfigDialog').open = false;
+
+                // 2. 使用 MDUI v2 的 alert 提示用户刷新
+                mdui.alert({
+                    headline: "导入成功",
+                    description: "配置已恢复，页面将自动刷新以应用更改。",
+                    confirmText: "确定",
+                    onConfirm: () => {
+                        window.location.reload();
+                    }
+                });
+            } catch (err) {
+                addLog("导入配置解析失败: " + err, "error");
+                // 这里手动调用之前定义好的 showError 即可显示红色错误弹窗
+                showError("解析失败：无效的 JSON 格式，请确保复制了完整的导出文本。");
+            }
+        }
 
         // --- LocalStorage 编辑器逻辑 ---
         function openLsEditor() {
