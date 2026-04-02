@@ -693,6 +693,7 @@
                     <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="2">已付款</mdui-chip>
                     <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="5">已退款</mdui-chip>
                     <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="4">已超时</mdui-chip>
+                    <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="queue">队列中</mdui-chip>
                 </div>
             </div>
 
@@ -852,8 +853,8 @@
             </div>
             <mdui-text-field id="goodsCode" label="商品编号" variant="outlined" clearable
                 onblur="queryGoodsInfo()"></mdui-text-field>
-            <mdui-text-field id="goodsName" label="商品名称" placeholder="自动计算" variant="outlined"
-                readonly></mdui-text-field>
+            <!-- 原来的只读 text-field 修改为了 select -->
+            <mdui-select id="goodsName" label="商品名称 (可点选最近记录)" placeholder="自动计算" variant="outlined"></mdui-select>
             <div class="row">
                 <mdui-text-field id="filingPrice" label="备案价" placeholder="自动计算" variant="outlined"
                     readonly></mdui-text-field>
@@ -876,7 +877,7 @@
         </mdui-card>
     </div>
 
-    <div class="footer-info" id="versionTrigger" onclick="handleVersionClick()">版本号：V260401.2</div>
+    <div class="footer-info" id="versionTrigger" onclick="handleVersionClick()">版本号：V260401.3</div>
 
     <mdui-fab class="fab-submit" icon="check" variant="primary" extended onclick="submitOrder()">立即提交</mdui-fab>
 
@@ -900,6 +901,7 @@
         const CONFIG_KEY = "APP_LOGIN_PAYLOAD";
         const STORE_PAYLOADS_KEY = "APP_LOGIN_PAYLOADS";
         const CURRENT_STORE_INDEX_KEY = "APP_CURRENT_STORE_INDEX";
+        const RECENT_GOODS_KEY = "APP_RECENT_GOODS_V1"; // 新增常量：商品缓存Key
         const DEFAULT_PAYLOAD = "";
 
         const DINGTALK_WEBHOOK_KEY = "DINGTALK_WEBHOOK";
@@ -936,6 +938,8 @@
 
         let storePayloads = [];
         let currentStoreIndex = 0;
+        
+        let recentGoodsList = []; // 新增：保存最近的商品列表缓存
 
         // --- 调试日志面板逻辑 ---
         let versionClickCount = 0;
@@ -1145,7 +1149,6 @@
             return list;
         }
 
-        // 新增：在所有门店队列中查找指定订单（用于判断是否有缓存的手机号）
         function findOrderInQueue(orderNumber) {
             for (const storeKey in orderQueueByStore.stores) {
                 const orders = orderQueueByStore.stores[storeKey].orders;
@@ -1265,6 +1268,50 @@
             });
         }
 
+        // ================== 最近商品缓存逻辑 ==================
+        function loadRecentGoods() {
+            const raw = localStorage.getItem(RECENT_GOODS_KEY);
+            recentGoodsList = raw ? safeParseJSON(raw, []) : [];
+            if (!Array.isArray(recentGoodsList)) recentGoodsList = [];
+            renderRecentGoodsSelect();
+        }
+
+        function saveRecentGoods(code, name) {
+            // 过滤掉重复的商品编号，保留最新
+            recentGoodsList = recentGoodsList.filter(item => item.code !== code);
+            recentGoodsList.unshift({ code, name });
+            // 限制最多保存 10 个
+            if (recentGoodsList.length > 10) {
+                recentGoodsList = recentGoodsList.slice(0, 10);
+            }
+            localStorage.setItem(RECENT_GOODS_KEY, JSON.stringify(recentGoodsList));
+            renderRecentGoodsSelect(code);
+        }
+
+        function renderRecentGoodsSelect(selectedCode = "") {
+            const selectEl = document.querySelector('#goodsName');
+            selectEl.innerHTML = '';
+            
+            const defItem = document.createElement('mdui-menu-item');
+            defItem.value = "";
+            defItem.innerText = "点此选历史商品↓";
+            selectEl.appendChild(defItem);
+
+            recentGoodsList.forEach(item => {
+                const opt = document.createElement('mdui-menu-item');
+                opt.value = item.code;
+                opt.innerText = item.name;
+                selectEl.appendChild(opt);
+            });
+
+            if (selectedCode) {
+                setTimeout(() => { selectEl.value = selectedCode; }, 50);
+            } else {
+                setTimeout(() => { selectEl.value = ""; }, 50);
+            }
+        }
+        // ======================================================
+
         window.addEventListener('load', () => {
             initializeStorePayloads();
             loadOrderQueue();
@@ -1272,6 +1319,8 @@
             loadOrderPushSentMap();
             cleanupOrderPushSentMap();
             bindLifecycleRecoveryEvents();
+            
+            loadRecentGoods(); // 载入历史商品记录
 
             dingTalkWebhook = localStorage.getItem(DINGTALK_WEBHOOK_KEY) || "";
             dingTalkSecret = localStorage.getItem(DINGTALK_SECRET_KEY) || "";
@@ -1291,6 +1340,18 @@
                 addLog(`启动自动检查，待检订单数: ${getAllQueuedOrders().length}`, "info");
                 checkNowAndEnsurePolling("boot");
             }
+
+            // ================== 商品下拉框切换事件 ==================
+            document.querySelector('#goodsName').addEventListener('change', (e) => {
+                const code = e.target.value;
+                if (!code) return; // 空选项不处理
+                const codeInput = document.querySelector('#goodsCode');
+                if (codeInput.value !== code) {
+                    codeInput.value = code;
+                    queryGoodsInfo(); // 自动重新查询/计算相关价格
+                }
+            });
+            // ======================================================
         });
 
         function initializeStorePayloads() {
@@ -2011,6 +2072,8 @@
                 if (filterVal) {
                     if (filterVal === "0") {
                         orders = orders.filter(o => o.payState === 0 || o.payState === 1);
+                    } else if (filterVal === "queue") {
+                        orders = orders.filter(o => findOrderInQueue(o.ccbPayOrderNumber) !== null);
                     } else {
                         orders = orders.filter(o => o.payState === parseInt(filterVal, 10));
                     }
@@ -2370,7 +2433,11 @@
             addLog(`查询商品信息: ${code}`, "info");
             const res = await callApi('/salesuser/queryGoodsInfo', 'GET', { goodsCode: code, uniscid: "" });
             if (res?.code === 0 && res.data) {
-                document.querySelector('#goodsName').value = res.data.goodsName;
+                
+                // 将真实的商品名称存在 dataset 里供提交使用，同时保存到历史记录
+                document.querySelector('#goodsCode').dataset.goodsName = res.data.goodsName;
+                saveRecentGoods(code, res.data.goodsName);
+
                 document.querySelector('#filingPrice').value = res.data.subsidyBackPrice;
 
                 const price = parseFloat(res.data.subsidyBackPrice);
@@ -2380,7 +2447,10 @@
             } else {
                 addLog(`商品[${code}]查询失败`, "error");
                 showError(`商品查询失败: ${res?.msg}`);
-                document.querySelector('#goodsName').value = "";
+                
+                // 查询失败清理
+                document.querySelector('#goodsCode').dataset.goodsName = "";
+                renderRecentGoodsSelect(""); 
             }
         }
 
@@ -2428,6 +2498,9 @@
             const city = els.city.value;
             const district = els.district.value;
             const townCode = els.town.value;
+            
+            // 安全地从 dataset 中获取由 queryGoodsInfo 请求回来的真实名称
+            const actualGoodsName = document.querySelector('#goodsCode').dataset.goodsName || "";
 
             let shopOrderNum = document.querySelector('#shopOrderNumber').value;
             if (document.querySelector('#autoOrderNumCheckbox').checked) {
@@ -2445,8 +2518,8 @@
                 if (t) townName = t.text;
             }
 
-            if (!mobile || !shopOrderNum || !goodsCode || !shopPrice || !city || !district || !townCode) {
-                return showError("请填写完整订单信息（含乡镇/街道）");
+            if (!mobile || !shopOrderNum || !goodsCode || !shopPrice || !city || !district || !townCode || !actualGoodsName) {
+                return showError("请填写完整订单信息（注意确认商品查询成功及乡镇地址）");
             }
 
             const addressStr = `${city}-${district}-${townName}-${detailAddr}`;
@@ -2459,7 +2532,7 @@
                 subsidyTotalAmount: parseFloat(subsidy || 0).toFixed(2),
                 goodsVoList: [{
                     goodsCode,
-                    goodsName: document.querySelector('#goodsName').value,
+                    goodsName: actualGoodsName,
                     goodsCount: 1,
                     shopGoodsActualPayPrice: parseFloat(actual || 0),
                     shopGoodsOriginalPrice: parseFloat(shopPrice),
