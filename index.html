@@ -877,7 +877,7 @@
         </mdui-card>
     </div>
 
-    <div class="footer-info" id="versionTrigger" onclick="handleVersionClick()">版本号：V260401.3</div>
+    <div class="footer-info" id="versionTrigger" onclick="handleVersionClick()">版本号：V260402.2</div>
 
     <mdui-fab class="fab-submit" icon="check" variant="primary" extended onclick="submitOrder()">立即提交</mdui-fab>
 
@@ -886,12 +886,28 @@
         <div class="log-header">
             <span style="font-weight: bold; color: rgb(var(--mdui-color-primary));">调试日志</span>
             <div style="display: flex; gap: 8px;">
+                <mdui-button variant="text" size="small" onclick="openLsEditor()">存储(Storage)</mdui-button>
                 <mdui-button variant="text" size="small" onclick="clearDebugLogs()">清空</mdui-button>
                 <mdui-button-icon icon="close" size="small" onclick="toggleLogPanel(false)"></mdui-button-icon>
             </div>
         </div>
         <div id="debugLogContent" class="log-content"></div>
     </div>
+
+    <!-- LocalStorage 编辑器弹窗 -->
+    <mdui-dialog id="lsEditorDialog" close-on-overlay-click>
+        <span slot="headline">LocalStorage 管理</span>
+        <div slot="description" style="overflow-y: auto; max-height: 60vh;">
+            <div style="display: flex; gap: 8px; margin-bottom: 16px;">
+                <mdui-text-field id="newLsKey" label="输入新的 Key" variant="outlined" style="flex: 1;"></mdui-text-field>
+                <mdui-button variant="tonal" onclick="addNewLsItem()" style="height: 56px;">添加</mdui-button>
+            </div>
+            <div id="lsItemList" style="display: flex; flex-direction: column; gap: 12px;"></div>
+        </div>
+        <mdui-button slot="action" variant="text" onclick="document.getElementById('lsEditorDialog').open = false">关闭</mdui-button>
+        <mdui-button slot="action" variant="text" onclick="refreshLsEditor()">刷新列表</mdui-button>
+        <mdui-button slot="action" variant="text" style="color: rgb(var(--mdui-color-error));" onclick="clearAllLs()">清空所有</mdui-button>
+    </mdui-dialog>
 
     <script>
         const LONGE_API_BASE = "https://www.longehuanxinjs.com/ccb_equity_api_new";
@@ -940,6 +956,115 @@
         let currentStoreIndex = 0;
         
         let recentGoodsList = []; // 新增：保存最近的商品列表缓存
+
+        // --- LocalStorage 编辑器逻辑 ---
+        function openLsEditor() {
+            document.getElementById('lsEditorDialog').open = true;
+            refreshLsEditor();
+        }
+
+        function refreshLsEditor() {
+            const container = document.getElementById('lsItemList');
+            container.innerHTML = '';
+            
+            if (localStorage.length === 0) {
+                container.innerHTML = '<div style="text-align:center; color:#999; padding: 20px;">LocalStorage 为空</div>';
+                return;
+            }
+            
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                const value = localStorage.getItem(key);
+                
+                const itemDiv = document.createElement('div');
+                itemDiv.style.border = '1px solid rgba(0,0,0,0.08)';
+                itemDiv.style.padding = '12px';
+                itemDiv.style.borderRadius = '12px';
+                itemDiv.style.display = 'flex';
+                itemDiv.style.flexDirection = 'column';
+                itemDiv.style.gap = '8px';
+                itemDiv.style.backgroundColor = 'rgb(var(--mdui-color-surface-container-low))';
+                
+                const keyLabel = document.createElement('div');
+                keyLabel.style.fontWeight = 'bold';
+                keyLabel.style.color = 'rgb(var(--mdui-color-primary))';
+                keyLabel.style.wordBreak = 'break-all';
+                keyLabel.innerText = `Key: ${key}`;
+                
+                const valueInput = document.createElement('mdui-text-field');
+                valueInput.variant = 'outlined';
+                valueInput.rows = 2;
+                valueInput.value = value;
+                
+                const btnRow = document.createElement('div');
+                btnRow.style.display = 'flex';
+                btnRow.style.justifyContent = 'flex-end';
+                btnRow.style.gap = '8px';
+                
+                const saveBtn = document.createElement('mdui-button');
+                saveBtn.variant = 'tonal';
+                saveBtn.size = 'small';
+                saveBtn.innerText = '保存';
+                saveBtn.onclick = () => {
+                    try {
+                        localStorage.setItem(key, valueInput.value);
+                        mdui.snackbar({ message: `已保存修改 [${key}]` });
+                        addLog(`更新 Storage Key: ${key}`, "info");
+                    } catch (e) {
+                        alert('保存失败: ' + e.message);
+                    }
+                };
+                
+                const delBtn = document.createElement('mdui-button');
+                delBtn.variant = 'text';
+                delBtn.size = 'small';
+                delBtn.style.color = 'rgb(var(--mdui-color-error))';
+                delBtn.innerText = '删除';
+                delBtn.onclick = () => {
+                    if (confirm(`确定删除数据项 [${key}] 吗？`)) {
+                        localStorage.removeItem(key);
+                        refreshLsEditor();
+                        addLog(`删除 Storage Key: ${key}`, "warn");
+                    }
+                };
+                
+                btnRow.appendChild(delBtn);
+                btnRow.appendChild(saveBtn);
+                
+                itemDiv.appendChild(keyLabel);
+                itemDiv.appendChild(valueInput);
+                itemDiv.appendChild(btnRow);
+                
+                container.appendChild(itemDiv);
+            }
+        }
+
+        function addNewLsItem() {
+            const input = document.getElementById('newLsKey');
+            const key = input.value.trim();
+            if (!key) {
+                mdui.snackbar({ message: "Key 不能为空" });
+                return;
+            }
+            if (localStorage.getItem(key) !== null) {
+                mdui.snackbar({ message: "该 Key 已存在，请在下方列表中修改" });
+                return;
+            }
+            localStorage.setItem(key, '');
+            input.value = '';
+            refreshLsEditor();
+            addLog(`新增 Storage Key: ${key}`, "info");
+        }
+
+        function clearAllLs() {
+            if (confirm('警告：将清空当前域下所有 LocalStorage 数据，包含配置和缓存等，不可恢复！确定吗？')) {
+                localStorage.clear();
+                refreshLsEditor();
+                addLog("已清空所有 LocalStorage 数据", "warn");
+                mdui.snackbar({ message: 'LocalStorage 已清空，建议刷新页面' });
+            }
+        }
+        // --- LocalStorage 编辑器逻辑结束 ---
 
         // --- 调试日志面板逻辑 ---
         let versionClickCount = 0;
