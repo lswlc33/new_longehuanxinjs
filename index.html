@@ -937,7 +937,7 @@
         </mdui-card>
     </div>
 
-    <div class="footer-info" id="versionTrigger" onclick="handleVersionClick()">版本号：V260402.6</div>
+    <div class="footer-info" id="versionTrigger" onclick="handleVersionClick()">版本号：加载中...</div>
 
     <mdui-fab class="fab-submit" icon="check" variant="primary" extended onclick="submitOrder()">立即提交</mdui-fab>
 
@@ -1030,6 +1030,66 @@
         let currentStoreIndex = 0;
 
         let recentGoodsList = [];
+
+
+
+        async function autoUpdateVersion() {
+            const baseUrl = `https://api.github.com/repos/lswlc33/new_longehuanxinjs/commits`;
+
+            try {
+                // 第一步：获取最新的一次提交 (per_page=1)
+                const lastOneRes = await fetch(`${baseUrl}?per_page=1`);
+                if (!lastOneRes.ok) throw new Error("无法获取最新提交记录");
+                const lastOneData = await lastOneRes.json();
+
+                if (!Array.isArray(lastOneData) || lastOneData.length === 0) {
+                    addLog("未发现提交记录，跳过版本更新", "warn");
+                    return;
+                }
+
+                // 提取最新提交的 ISO 日期字符串 (例如: "2026-04-02")
+                const latestFullDate = lastOneData[0].commit.author.date;
+                const latestDay = latestFullDate.split('T')[0];
+
+                // 第二步：查询那一天的所有提交
+                // 设置 since 为当天的 00:00:00，until 为当天的 23:59:59
+                const since = `${latestDay}T00:00:00Z`;
+                const until = `${latestDay}T23:59:59Z`;
+
+                const dayCommitsRes = await fetch(`${baseUrl}?since=${since}&until=${until}&per_page=100`);
+                if (!dayCommitsRes.ok) throw new Error("无法统计当日提交数");
+                const dayCommitsData = await dayCommitsRes.json();
+
+                const count = dayCommitsData.length;
+
+                // 第三步：格式化日期并更新 UI
+                // 将 "2026-04-02" 转换为 "260402"
+                const dateParts = latestDay.split('-'); // ["2026", "04", "02"]
+                const yy = dateParts[0].slice(-2);
+                const mm = dateParts[1];
+                const dd = dateParts[2];
+                const versionDate = `${yy}${mm}${dd}`;
+
+                const finalVersion = `V${versionDate}.${count}`;
+
+                // 更新页面元素
+                const versionEl = document.getElementById('versionTrigger');
+                if (versionEl) {
+                    // 保留原有的后缀内容（如：AI加强版）
+                    const oldText = versionEl.innerText;
+                    const suffixMatch = oldText.match(/[\s\S]*?(V[\d\.]+|版本号：[\d\.]+)(.*)/);
+                    const suffix = suffixMatch ? suffixMatch[2] : "";
+
+                    versionEl.innerText = `版本号：${finalVersion}${suffix}`;
+                    addLog(`版本号已同步 GitHub: ${finalVersion}`, "info");
+                }
+
+            } catch (error) {
+                addLog(`同步版本号失败: ${error.message}`, "warn");
+                console.error("Version Sync Error:", error);
+            }
+        }
+
 
         // --- 备份与还原逻辑 (修复后的正确调用方式) ---
         async function exportFullConfig() {
@@ -1600,6 +1660,7 @@
             loadOrderPushSentMap();
             cleanupOrderPushSentMap();
             bindLifecycleRecoveryEvents();
+            autoUpdateVersion()
 
             loadRecentGoods();
 
