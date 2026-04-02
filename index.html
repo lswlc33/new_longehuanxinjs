@@ -643,9 +643,19 @@
             margin-right: 8px;
         }
 
-        .log-level-info { color: rgb(var(--mdui-color-on-surface-variant)); }
-        .log-level-warn { color: #e65100; font-weight: bold; }
-        .log-level-error { color: rgb(var(--mdui-color-error)); font-weight: bold; }
+        .log-level-info {
+            color: rgb(var(--mdui-color-on-surface-variant));
+        }
+
+        .log-level-warn {
+            color: #e65100;
+            font-weight: bold;
+        }
+
+        .log-level-error {
+            color: rgb(var(--mdui-color-error));
+            font-weight: bold;
+        }
     </style>
 </head>
 
@@ -736,7 +746,7 @@
     </mdui-dialog>
 
     <mdui-dialog id="configDialog" close-on-overlay-click>
-        <span slot="headline">API 与推送配置</span>
+        <span slot="headline">系统设置</span>
         <div slot="description" style="overflow-y: auto;">
             <p style="margin-bottom: 16px; font-size: 13px; opacity: 0.7;">配置将保存到本地浏览器缓存中。</p>
 
@@ -749,6 +759,8 @@
             </div>
             <div id="payloadList" class="payload-list"></div>
 
+
+
             <div
                 style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
                 钉钉推送配置
@@ -760,6 +772,19 @@
             <div style="margin-top: 12px; text-align: right;">
                 <mdui-button variant="tonal" onclick="testDingTalk()" icon="send">测试钉钉消息</mdui-button>
             </div>
+
+            <div
+                style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
+                AI 智能识别配置 (OpenAI 兼容)
+            </div>
+            <mdui-switch id="configAiEnable" style="margin-bottom: 12px;">启用 AI 智能识别</mdui-switch>
+            <mdui-text-field id="configAiEndpoint" label="API Endpoint"
+                placeholder="例如: https://api.openai.com/v1/chat/completions" variant="outlined" clearable
+                style="margin-bottom: 12px;"></mdui-text-field>
+            <mdui-text-field id="configAiModel" label="模型名称" placeholder="例如: gpt-3.5-turbo, qwen-plus"
+                variant="outlined" clearable style="margin-bottom: 12px;"></mdui-text-field>
+            <mdui-text-field id="configAiKey" label="API Key" type="password" variant="outlined" clearable
+                style="margin-bottom: 12px;" toggle-password></mdui-text-field>
         </div>
         <mdui-button slot="action" variant="text" onclick="closeConfigDialog()">取消</mdui-button>
         <mdui-button slot="action" variant="filled" onclick="saveConfig()">保存配置并重连</mdui-button>
@@ -804,8 +829,7 @@
                 <span class="section-title">智能填充</span>
                 <mdui-button variant="tonal" class="btn-small" onclick="smartParse()">智能识别</mdui-button>
             </div>
-            <mdui-text-field rows="2" id="smartInput" variant="outlined" clearable
-                placeholder="在此粘贴：
+            <mdui-text-field rows="2" id="smartInput" variant="outlined" clearable placeholder="在此粘贴：
 手机号 区 街道 小区门牌"></mdui-text-field>
         </mdui-card>
 
@@ -853,7 +877,6 @@
             </div>
             <mdui-text-field id="goodsCode" label="商品编号" variant="outlined" clearable
                 onblur="queryGoodsInfo()"></mdui-text-field>
-            <!-- 原来的只读 text-field 修改为了 select -->
             <mdui-select id="goodsName" label="商品名称 (可点选最近记录)" placeholder="自动计算" variant="outlined"></mdui-select>
             <div class="row">
                 <mdui-text-field id="filingPrice" label="备案价" placeholder="自动计算" variant="outlined"
@@ -877,7 +900,7 @@
         </mdui-card>
     </div>
 
-    <div class="footer-info" id="versionTrigger" onclick="handleVersionClick()">版本号：V260402.2</div>
+    <div class="footer-info" id="versionTrigger" onclick="handleVersionClick()">版本号：V260402.3 AI加强版</div>
 
     <mdui-fab class="fab-submit" icon="check" variant="primary" extended onclick="submitOrder()">立即提交</mdui-fab>
 
@@ -904,9 +927,11 @@
             </div>
             <div id="lsItemList" style="display: flex; flex-direction: column; gap: 12px;"></div>
         </div>
-        <mdui-button slot="action" variant="text" onclick="document.getElementById('lsEditorDialog').open = false">关闭</mdui-button>
+        <mdui-button slot="action" variant="text"
+            onclick="document.getElementById('lsEditorDialog').open = false">关闭</mdui-button>
         <mdui-button slot="action" variant="text" onclick="refreshLsEditor()">刷新列表</mdui-button>
-        <mdui-button slot="action" variant="text" style="color: rgb(var(--mdui-color-error));" onclick="clearAllLs()">清空所有</mdui-button>
+        <mdui-button slot="action" variant="text" style="color: rgb(var(--mdui-color-error));"
+            onclick="clearAllLs()">清空所有</mdui-button>
     </mdui-dialog>
 
     <script>
@@ -917,11 +942,17 @@
         const CONFIG_KEY = "APP_LOGIN_PAYLOAD";
         const STORE_PAYLOADS_KEY = "APP_LOGIN_PAYLOADS";
         const CURRENT_STORE_INDEX_KEY = "APP_CURRENT_STORE_INDEX";
-        const RECENT_GOODS_KEY = "APP_RECENT_GOODS_V1"; // 新增常量：商品缓存Key
+        const RECENT_GOODS_KEY = "APP_RECENT_GOODS_V1";
         const DEFAULT_PAYLOAD = "";
 
         const DINGTALK_WEBHOOK_KEY = "DINGTALK_WEBHOOK";
         const DINGTALK_SECRET_KEY = "DINGTALK_SECRET";
+
+        // AI 解析配置 Key
+        const AI_ENABLE_KEY = "AI_PARSE_ENABLE";
+        const AI_ENDPOINT_KEY = "AI_PARSE_ENDPOINT";
+        const AI_MODEL_KEY = "AI_PARSE_MODEL";
+        const AI_KEY_KEY = "AI_PARSE_KEY";
 
         const payStates = {
             0: "待付款", 1: "支付中", 2: "已付款",
@@ -931,6 +962,12 @@
         let loginPayload = DEFAULT_PAYLOAD;
         let dingTalkWebhook = "";
         let dingTalkSecret = "";
+
+        // AI 解析变量
+        let aiEnable = false;
+        let aiEndpoint = "";
+        let aiModel = "";
+        let aiKey = "";
 
         let currentToken = "";
         let orderToCancel = "";
@@ -954,8 +991,8 @@
 
         let storePayloads = [];
         let currentStoreIndex = 0;
-        
-        let recentGoodsList = []; // 新增：保存最近的商品列表缓存
+
+        let recentGoodsList = [];
 
         // --- LocalStorage 编辑器逻辑 ---
         function openLsEditor() {
@@ -966,16 +1003,16 @@
         function refreshLsEditor() {
             const container = document.getElementById('lsItemList');
             container.innerHTML = '';
-            
+
             if (localStorage.length === 0) {
                 container.innerHTML = '<div style="text-align:center; color:#999; padding: 20px;">LocalStorage 为空</div>';
                 return;
             }
-            
+
             for (let i = 0; i < localStorage.length; i++) {
                 const key = localStorage.key(i);
                 const value = localStorage.getItem(key);
-                
+
                 const itemDiv = document.createElement('div');
                 itemDiv.style.border = '1px solid rgba(0,0,0,0.08)';
                 itemDiv.style.padding = '12px';
@@ -984,23 +1021,23 @@
                 itemDiv.style.flexDirection = 'column';
                 itemDiv.style.gap = '8px';
                 itemDiv.style.backgroundColor = 'rgb(var(--mdui-color-surface-container-low))';
-                
+
                 const keyLabel = document.createElement('div');
                 keyLabel.style.fontWeight = 'bold';
                 keyLabel.style.color = 'rgb(var(--mdui-color-primary))';
                 keyLabel.style.wordBreak = 'break-all';
                 keyLabel.innerText = `Key: ${key}`;
-                
+
                 const valueInput = document.createElement('mdui-text-field');
                 valueInput.variant = 'outlined';
                 valueInput.rows = 2;
                 valueInput.value = value;
-                
+
                 const btnRow = document.createElement('div');
                 btnRow.style.display = 'flex';
                 btnRow.style.justifyContent = 'flex-end';
                 btnRow.style.gap = '8px';
-                
+
                 const saveBtn = document.createElement('mdui-button');
                 saveBtn.variant = 'tonal';
                 saveBtn.size = 'small';
@@ -1014,7 +1051,7 @@
                         alert('保存失败: ' + e.message);
                     }
                 };
-                
+
                 const delBtn = document.createElement('mdui-button');
                 delBtn.variant = 'text';
                 delBtn.size = 'small';
@@ -1027,14 +1064,14 @@
                         addLog(`删除 Storage Key: ${key}`, "warn");
                     }
                 };
-                
+
                 btnRow.appendChild(delBtn);
                 btnRow.appendChild(saveBtn);
-                
+
                 itemDiv.appendChild(keyLabel);
                 itemDiv.appendChild(valueInput);
                 itemDiv.appendChild(btnRow);
-                
+
                 container.appendChild(itemDiv);
             }
         }
@@ -1084,7 +1121,7 @@
             const panel = document.getElementById('debugLogPanel');
             const isCurrentlyOpen = panel.classList.contains('open');
             const shouldOpen = show !== undefined ? show : !isCurrentlyOpen;
-            
+
             if (shouldOpen) {
                 panel.classList.add('open');
                 addLog("已开启调试日志面板", "info");
@@ -1096,20 +1133,18 @@
         function addLog(msg, level = 'info') {
             const container = document.getElementById('debugLogContent');
             const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-            
+
             const logEl = document.createElement('div');
             logEl.className = `log-entry log-level-${level}`;
             logEl.innerHTML = `<span class="log-time">[${time}]</span>${msg}`;
-            
+
             container.appendChild(logEl);
             container.scrollTop = container.scrollHeight;
-            
-            // 限制条数
+
             if (container.children.length > 300) {
                 container.removeChild(container.firstChild);
             }
-            
-            // 同步输出到控制台
+
             if (level === 'error') console.error(`[${time}] ${msg}`);
             else if (level === 'warn') console.warn(`[${time}] ${msg}`);
             else console.log(`[${time}] ${msg}`);
@@ -1393,7 +1428,6 @@
             });
         }
 
-        // ================== 最近商品缓存逻辑 ==================
         function loadRecentGoods() {
             const raw = localStorage.getItem(RECENT_GOODS_KEY);
             recentGoodsList = raw ? safeParseJSON(raw, []) : [];
@@ -1402,10 +1436,8 @@
         }
 
         function saveRecentGoods(code, name) {
-            // 过滤掉重复的商品编号，保留最新
             recentGoodsList = recentGoodsList.filter(item => item.code !== code);
             recentGoodsList.unshift({ code, name });
-            // 限制最多保存 10 个
             if (recentGoodsList.length > 10) {
                 recentGoodsList = recentGoodsList.slice(0, 10);
             }
@@ -1416,7 +1448,7 @@
         function renderRecentGoodsSelect(selectedCode = "") {
             const selectEl = document.querySelector('#goodsName');
             selectEl.innerHTML = '';
-            
+
             const defItem = document.createElement('mdui-menu-item');
             defItem.value = "";
             defItem.innerText = "点此选历史商品↓";
@@ -1435,7 +1467,6 @@
                 setTimeout(() => { selectEl.value = ""; }, 50);
             }
         }
-        // ======================================================
 
         window.addEventListener('load', () => {
             initializeStorePayloads();
@@ -1444,11 +1475,16 @@
             loadOrderPushSentMap();
             cleanupOrderPushSentMap();
             bindLifecycleRecoveryEvents();
-            
-            loadRecentGoods(); // 载入历史商品记录
+
+            loadRecentGoods();
 
             dingTalkWebhook = localStorage.getItem(DINGTALK_WEBHOOK_KEY) || "";
             dingTalkSecret = localStorage.getItem(DINGTALK_SECRET_KEY) || "";
+
+            aiEnable = localStorage.getItem(AI_ENABLE_KEY) === "true";
+            aiEndpoint = localStorage.getItem(AI_ENDPOINT_KEY) || "";
+            aiModel = localStorage.getItem(AI_MODEL_KEY) || "";
+            aiKey = localStorage.getItem(AI_KEY_KEY) || "";
 
             if (storePayloads.length && storePayloads[currentStoreIndex]?.payload?.trim()) {
                 loginPayload = storePayloads[currentStoreIndex].payload.trim();
@@ -1466,17 +1502,15 @@
                 checkNowAndEnsurePolling("boot");
             }
 
-            // ================== 商品下拉框切换事件 ==================
             document.querySelector('#goodsName').addEventListener('change', (e) => {
                 const code = e.target.value;
-                if (!code) return; // 空选项不处理
+                if (!code) return;
                 const codeInput = document.querySelector('#goodsCode');
                 if (codeInput.value !== code) {
                     codeInput.value = code;
-                    queryGoodsInfo(); // 自动重新查询/计算相关价格
+                    queryGoodsInfo();
                 }
             });
-            // ======================================================
         });
 
         function initializeStorePayloads() {
@@ -1896,7 +1930,7 @@
 
                     if (newState !== oldState) {
                         addLog(`订单[${orderNumber}]状态变更: ${payStates[oldState] || '未知'} -> ${payStates[newState] || '未知'}`, "info");
-                        
+
                         if (newState === 2) {
                             showNotification("订单支付成功", `订单号尾号: ${orderNumber.slice(-4)}\n状态: 已付款`);
                         }
@@ -2017,6 +2051,12 @@
             renderPayloadInputs();
             els.dingWebhookInput.value = dingTalkWebhook;
             els.dingSecretInput.value = dingTalkSecret;
+
+            document.getElementById('configAiEnable').checked = aiEnable;
+            document.getElementById('configAiEndpoint').value = aiEndpoint;
+            document.getElementById('configAiModel').value = aiModel;
+            document.getElementById('configAiKey').value = aiKey;
+
             els.configDialog.open = true;
         }
 
@@ -2043,10 +2083,20 @@
             dingTalkWebhook = els.dingWebhookInput.value.trim();
             dingTalkSecret = els.dingSecretInput.value.trim();
 
+            aiEnable = document.getElementById('configAiEnable').checked;
+            aiEndpoint = document.getElementById('configAiEndpoint').value.trim();
+            aiModel = document.getElementById('configAiModel').value.trim();
+            aiKey = document.getElementById('configAiKey').value.trim();
+
             addLog("用户保存配置并尝试重连", "info");
             persistStorePayloads();
             localStorage.setItem(DINGTALK_WEBHOOK_KEY, dingTalkWebhook);
             localStorage.setItem(DINGTALK_SECRET_KEY, dingTalkSecret);
+
+            localStorage.setItem(AI_ENABLE_KEY, aiEnable);
+            localStorage.setItem(AI_ENDPOINT_KEY, aiEndpoint);
+            localStorage.setItem(AI_MODEL_KEY, aiModel);
+            localStorage.setItem(AI_KEY_KEY, aiKey);
 
             renderPayloadInputs();
             renderShopSwitchMenu();
@@ -2309,7 +2359,6 @@
                     orderToPush = order;
                     detailPushBtn.style.display = 'inline-flex';
 
-                    // === 新增逻辑：检查队列中是否有该订单及缓存的手机号 ===
                     const queuedData = findOrderInQueue(order.ccbPayOrderNumber);
                     if (queuedData && queuedData.item && queuedData.item.buyerMobile) {
                         detailPushBtn.innerText = "可补推送";
@@ -2320,7 +2369,6 @@
                         orderToPush._cachedMobile = "";
                         orderToPush._storeKey = "";
                     }
-                    // ===============================================
 
                     addBtn("退款", () => {
                         dialog.open = false;
@@ -2415,7 +2463,6 @@
             els.detailDialog.open = false;
             setTimeout(() => {
                 els.pushDialog.open = true;
-                // 新增：如果有缓存的手机号，自动填入输入框
                 if (orderToPush._cachedMobile) {
                     els.pushMobileInput.value = orderToPush._cachedMobile;
                 } else {
@@ -2442,8 +2489,7 @@
             const msg = buildDingTalkOrderMessage(orderToPush, pushMobile);
             await sendDingTalkMessage(msg);
             mdui.snackbar({ message: "推送请求已发送", placement: "top" });
-            
-            // === 新增逻辑：推送成功后从队列中删除并记录状态 ===
+
             const storeKey = orderToPush._storeKey || getCurrentStoreKey();
             const orderNumber = orderToPush.ccbPayOrderNumber;
             if (orderNumber) {
@@ -2451,7 +2497,6 @@
                 markOrderPushed(storeKey, orderNumber, "PAID");
                 addLog(`已将订单[${orderNumber}]从本地轮询队列中移除`, "info");
             }
-            // ===================================================
 
             closePushDialog();
         });
@@ -2558,11 +2603,8 @@
             addLog(`查询商品信息: ${code}`, "info");
             const res = await callApi('/salesuser/queryGoodsInfo', 'GET', { goodsCode: code, uniscid: "" });
             if (res?.code === 0 && res.data) {
-                
-                // 将真实的商品名称存在 dataset 里供提交使用，同时保存到历史记录
                 document.querySelector('#goodsCode').dataset.goodsName = res.data.goodsName;
                 saveRecentGoods(code, res.data.goodsName);
-
                 document.querySelector('#filingPrice').value = res.data.subsidyBackPrice;
 
                 const price = parseFloat(res.data.subsidyBackPrice);
@@ -2572,10 +2614,8 @@
             } else {
                 addLog(`商品[${code}]查询失败`, "error");
                 showError(`商品查询失败: ${res?.msg}`);
-                
-                // 查询失败清理
                 document.querySelector('#goodsCode').dataset.goodsName = "";
-                renderRecentGoodsSelect(""); 
+                renderRecentGoodsSelect("");
             }
         }
 
@@ -2623,8 +2663,7 @@
             const city = els.city.value;
             const district = els.district.value;
             const townCode = els.town.value;
-            
-            // 安全地从 dataset 中获取由 queryGoodsInfo 请求回来的真实名称
+
             const actualGoodsName = document.querySelector('#goodsCode').dataset.goodsName || "";
 
             let shopOrderNum = document.querySelector('#shopOrderNumber').value;
@@ -2693,12 +2732,154 @@
             }
         }
 
-        function smartParse() {
+        async function smartParse() {
             const raw = document.querySelector('#smartInput').value;
             if (!raw.trim()) return mdui.snackbar({ message: "请先输入文本" });
             if (!Object.keys(regionTree).length) return mdui.snackbar({ message: "地址库未加载" });
 
-            addLog("开始智能解析文本地址", "info");
+            if (aiEnable && aiEndpoint && aiModel && aiKey) {
+                await aiSmartParse(raw);
+            } else {
+                regexSmartParse(raw);
+            }
+        }
+
+        async function aiSmartParse(raw) {
+            addLog("使用 AI 大模型进行地址智能解析...", "info");
+            const loadingSnackbar = mdui.snackbar({ message: "AI 正在识别...", placement: "top", duration: 0 });
+
+            try {
+                const systemPrompt = `你是一个地址解析助手。请从用户输入的文本中提取出手机号、城市、区县、乡镇/街道、详细地址。
+严格返回JSON格式，不要返回任何其他说明或Markdown标记。
+必须包含以下字段：
+{
+  "mobile": "手机号码，11位数字，若无则为空字符串",
+  "city": "地级市名称，如'常州市'，需包含市等后缀，若无则为空",
+  "district": "区县名称，如'武进区'，若无则为空",
+  "town": "乡镇或街道名称，如'南夏墅街道'，若无则为空",
+  "detail": "剔除上述省市区镇和手机号后的剩余详细地址,但只能是地址，不能包含其他杂乱信息"
+}`;
+
+                const response = await fetch(aiEndpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${aiKey}`
+                    },
+                    body: JSON.stringify({
+                        model: aiModel,
+                        thinking: { type: "disabled" },
+                        stream: false,
+                        messages: [
+                            { role: "system", content: systemPrompt },
+                            { role: "user", content: raw }
+                        ],
+                        temperature: 0.1
+                    })
+                });
+
+                const data = await response.json();
+                if (!response.ok || data.error) {
+                    throw new Error(data.error?.message || "请求失败");
+                }
+
+                const content = data.choices[0].message.content;
+                addLog(`AI 原生响应: ${content}`, "info");
+
+                let jsonStr = content;
+                const match = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+                if (match) {
+                    jsonStr = match[1];
+                }
+
+                const result = JSON.parse(jsonStr);
+
+                if (loadingSnackbar) loadingSnackbar.open = false;
+                mdui.snackbar({ message: "AI 识别成功" });
+                applyParsedAddress(result);
+
+            } catch (e) {
+                if (loadingSnackbar) loadingSnackbar.open = false;
+                addLog(`AI 解析异常: ${e.message}`, "error");
+                mdui.snackbar({ message: `AI 解析失败，降级使用常规解析` });
+                regexSmartParse(raw);
+            }
+        }
+
+        function applyParsedAddress(parsed) {
+            let { mobile, city, district, town, detail } = parsed;
+
+            if (mobile && /^1[3-9]\d{9}$/.test(mobile)) {
+                document.querySelector('#buyerMobile').value = mobile;
+                checkQualification();
+            }
+
+            let matchedCity = "";
+            let matchedDist = "";
+            let matchedTownCode = "";
+
+            const normalize = (str) => (str || "").replace(/[市区县镇乡街道]/g, "");
+
+            if (city) {
+                for (const cKey in regionTree) {
+                    if (cKey === city || cKey.includes(normalize(city))) {
+                        matchedCity = cKey;
+                        break;
+                    }
+                }
+            }
+
+            if (matchedCity && district) {
+                for (const dKey in regionTree[matchedCity]) {
+                    if (dKey === district || dKey.includes(normalize(district))) {
+                        matchedDist = dKey;
+                        break;
+                    }
+                }
+            } else if (!matchedCity && district) {
+                for (const cKey in regionTree) {
+                    for (const dKey in regionTree[cKey]) {
+                        if (dKey === district || dKey.includes(normalize(district))) {
+                            matchedCity = cKey;
+                            matchedDist = dKey;
+                            break;
+                        }
+                    }
+                    if (matchedCity) break;
+                }
+            }
+
+            if (matchedCity && matchedDist && town) {
+                const towns = regionTree[matchedCity][matchedDist] || [];
+                for (const t of towns) {
+                    if (t.text === town || t.text.includes(normalize(town)) || normalize(town).includes(normalize(t.text))) {
+                        matchedTownCode = t.value;
+                        break;
+                    }
+                }
+            }
+
+            if (matchedCity) {
+                addLog(`AI地址匹配结果: ${matchedCity}-${matchedDist}-${matchedTownCode}`, "info");
+                els.city.value = matchedCity;
+                setTimeout(() => {
+                    populateSelect(els.district, Object.keys(regionTree[matchedCity]), matchedDist);
+                    setTimeout(() => {
+                        const towns = matchedDist ? (regionTree[matchedCity][matchedDist] || []) : [];
+                        populateSelect(els.town, towns, matchedTownCode);
+                    }, 100);
+                }, 50);
+            } else {
+                mdui.snackbar({ message: "解析成功，但在地址库中未能精确匹配省市区" });
+            }
+
+            if (detail) {
+                document.querySelector('#detailAddress').value = detail;
+            }
+        }
+
+        function regexSmartParse(raw) {
+            addLog("开始正则解析文本地址", "info");
             const escapeRegExp = (str = "") => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
             const normalizeName = (name = "") => name.replace(/[市区县]$/, "");
             const hasToken = (text, fullName) => {
@@ -2777,7 +2958,7 @@
             }
 
             if (matched.city) {
-                addLog(`解析结果: ${matched.city}-${matched.dist}-${matched.townName}`, "info");
+                addLog(`正则解析结果: ${matched.city}-${matched.dist}-${matched.townName}`, "info");
                 els.city.value = matched.city;
                 setTimeout(() => {
                     populateSelect(els.district, Object.keys(regionTree[matched.city]), matched.dist);
