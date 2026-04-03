@@ -1103,7 +1103,6 @@
                     aiEndpoint: localStorage.getItem(AI_ENDPOINT_KEY),
                     aiModel: localStorage.getItem(AI_MODEL_KEY),
                     aiKey: localStorage.getItem(AI_KEY_KEY),
-                    recentGoods: localStorage.getItem(RECENT_GOODS_KEY),
                     exportTime: new Date().toLocaleString()
                 };
 
@@ -1121,6 +1120,7 @@
             }
         }
 
+        
         /**
          * 触发导入流程：打开对话框并清空输入
          */
@@ -1156,7 +1156,6 @@
                 if (data.aiEndpoint !== undefined) localStorage.setItem(AI_ENDPOINT_KEY, data.aiEndpoint || "");
                 if (data.aiModel !== undefined) localStorage.setItem(AI_MODEL_KEY, data.aiModel || "");
                 if (data.aiKey !== undefined) localStorage.setItem(AI_KEY_KEY, data.aiKey || "");
-                if (data.recentGoods !== undefined) localStorage.setItem(RECENT_GOODS_KEY, data.recentGoods || "[]");
 
                 addLog("导入配置成功，准备重启应用", "info");
 
