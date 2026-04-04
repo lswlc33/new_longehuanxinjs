@@ -1,308 +1,565 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="mdui-theme-auto">
-
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>商品预下单</title>
+    <title>虚拟票据</title>
+    
+    <!-- 引入 MiSans 字体 -->
+    <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/misans@4.1.0/lib/Normal/MiSans-Medium.min.css" />
+    <link rel="stylesheet" crossorigin="anonymous" href="https://cdn.jsdelivr.net/npm/misans@4.1.0/lib/Normal/MiSans-Bold.min.css" />
+    
+    <!-- 引入 Element Plus CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
 
-    <link rel="stylesheet" href="https://unpkg.com/mdui@2/mdui.css">
-    <script src="https://unpkg.com/mdui@2/mdui.global.js"></script>
-    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-    <link rel="stylesheet" crossorigin="anonymous"
-        href="https://cdn.jsdelivr.net/npm/misans@4.1.0/lib/Normal/MiSans-Medium.min.css" />
-    <link rel="stylesheet" crossorigin="anonymous"
-        href="https://cdn.jsdelivr.net/npm/misans@4.1.0/lib/Normal/MiSans-Bold.min.css" />
+    <style>
+        /* 全局应用 MiSans 字体 */
+        body {
+            font-family: 'MiSans', 'Microsoft YaHei', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f0f2f5;
+        }
 
-    <link rel="stylesheet" href="styles.css">
+        /* 覆盖 Element Plus 默认字体 */
+        * { font-family: inherit; }
+
+        /* 隐藏 Vue 尚未编译时的插值表达式 */
+        [v-cloak] { display: none; }
+
+        /* 自定义抽屉内样式优化 */
+        .el-drawer__body { padding: 0 20px 20px 20px; overflow-y: auto; }
+        .section-title { font-size: 16px; font-family: 'MiSans', sans-serif; font-weight: bold; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ebeef5; padding-bottom: 10px; margin: 20px 0 15px 0; color: #303133; }
+        .section-title:first-child { margin-top: 0; }
+        .config-card { background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #ebeef5; }
+        .item-card { background: #fff; border: 1px dashed #dcdfe6; border-radius: 6px; padding: 15px; margin-bottom: 10px; position: relative; }
+        .item-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 13px; color: #909399; }
+        
+        /* 悬浮按钮 */
+        .floating-btn { position: fixed; left: 20px; top: 20px; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+
+        /* === 预览区外部容器 === */
+        .preview-container { 
+            width: 100%; 
+            padding: 60px 40px; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            min-height: 100vh;
+        }
+        
+        /* === 打印单据核心样式 === */
+        .receipt-paper { width: 210mm; background: #fff; padding: 20px 40px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); color: #000; }
+        
+        /* 头部：利用Flex划分三等分，绝对防重合且保证居中 */
+        .r-header { display: flex; align-items: flex-start; margin-bottom: 25px; }
+        .r-logo-wrap { width: 25%; display: flex; align-items: center; flex-direction: row; color: #f28b00; font-weight: bold; font-size: 20px; line-height: 1.2; }
+        .r-logo-icon { background: #f28b00; color: #fff; width: 24px; height: 24px; border-radius: 4px; display: inline-flex; justify-content: center; align-items: center; margin-right: 5px; font-size: 16px;}
+        .r-logo-text { display: flex; flex-direction: column; }
+        .r-title-wrap { width: 50%; text-align: center; }
+        .r-title { font-size: 24px; font-weight: bold; letter-spacing: 1px; display: inline-block; font-family: 'MiSans', sans-serif;}
+        .r-header-placeholder { width: 25%; } 
+
+        /* Meta信息 */
+        .r-meta-row { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; }
+        
+        /* 主体表格区 */
+        .r-body { border: 2px solid #000; margin-bottom: 10px; }
+        .r-table { width: 100%; border-collapse: collapse; text-align: center; font-size: 15px; }
+        .r-table th, .r-table td { border-bottom: 1px dashed #000; border-right: 1px dashed #000; padding: 10px 5px; }
+        .r-table th:last-child, .r-table td:last-child { border-right: none; }
+        .r-table th { font-weight: normal; }
+        
+        /* 合并区域行 */
+        .r-summary-row { padding: 15px 10px; border-bottom: 1px dashed #000; display: flex; justify-content: flex-end; font-size: 16px; font-weight: bold;}
+        .r-amount-row { padding: 15px 10px; border-bottom: 1px dashed #000; display: flex; gap: 60px; font-size: 15px; }
+        .r-notes-row { padding: 15px 10px; font-size: 15px; min-height: 60px; }
+
+        /* 打印按钮区 */
+        .action-bar { margin-top: 40px; }
+
+        /* === 打印媒体查询 === */
+        @media print {
+            body { background: #fff; padding: 0; }
+            .no-print { display: none !important; } /* 隐藏所有UI组件和非打印元素 */
+            .preview-container { padding: 0; display: block; min-height: auto;}
+            .receipt-paper { width: 100%; padding: 0; box-shadow: none; margin: 0 auto; border: none; }
+            @page { size: A4 portrait; margin: 15mm; }
+        }
+    </style>
 </head>
-
 <body>
-    <div class="status-bar">
-        <span id="tokenStatusBadge" class="token-status">未连接</span>
-        <div class="shop-info">
-            <span id="displayShopName" class="shop-name">正在加载...</span>
-        </div>
-        <div style="display: flex; gap: 4px;">
-            <mdui-tooltip content="订单列表">
-                <mdui-button-icon id="orderListBtn" icon="list_alt"></mdui-button-icon>
-            </mdui-tooltip>
-            <mdui-tooltip content="API与推送设置">
-                <mdui-button-icon id="configBtn" icon="settings"></mdui-button-icon>
-            </mdui-tooltip>
-            <mdui-tooltip content="刷新Token">
-                <mdui-button-icon id="refreshTokenBtn" icon="refresh"></mdui-button-icon>
-            </mdui-tooltip>
+    <div id="app" v-cloak>
+        <!-- 悬浮打开侧边栏按钮 -->
+        <el-button type="primary" size="large" class="floating-btn no-print" @click="drawerVisible = true">
+            <el-icon><Menu /></el-icon>&nbsp;展开控制台
+        </el-button>
+
+        <!-- Element Plus 侧边抽屉 -->
+        <el-drawer v-model="drawerVisible" direction="ltr" size="480px" :with-header="false" class="no-print">
+            <div style="padding-top: 20px;">
+                <!-- 基础数据区块 -->
+                <div class="section-title">📝 订单基础数据</div>
+                <el-form :model="order" label-position="top" size="default">
+                    <el-form-item label="票据大标题">
+                        <el-input v-model="order.title" placeholder="例如：销售专用票据"></el-input>
+                    </el-form-item>
+                    <el-row :gutter="15">
+                        <el-col :span="12">
+                            <el-form-item label="票据编号">
+                                <el-input v-model="order.receiptNo">
+                                    <template #append>
+                                        <el-button @click="generateReceiptNo"><el-icon><Refresh /></el-icon></el-button>
+                                    </template>
+                                </el-input>
+                            </el-form-item>
+                        </el-col>
+                        <el-col :span="12">
+                            <el-form-item label="购货日期">
+                                <el-input v-model="order.date"></el-input>
+                            </el-form-item>
+                        </el-col>
+                    </el-row>
+                    <el-row :gutter="15">
+                        <el-col :span="12">
+                            <el-form-item label="顾客姓名">
+                                <el-input v-model="order.customer"></el-input>
+                            </el-form-item>
+                        </el-col>
+                        <el-col :span="12">
+                            <el-form-item label="联系电话">
+                                <el-input v-model="order.phone"></el-input>
+                            </el-form-item>
+                        </el-col>
+                    </el-row>
+                    <el-form-item label="送货地址">
+                        <el-input v-model="order.address"></el-input>
+                    </el-form-item>
+                    <el-form-item label="备注">
+                        <el-input v-model="order.remarks" placeholder="如有特殊说明请填写"></el-input>
+                    </el-form-item>
+                </el-form>
+
+                <!-- AI 识别区块 -->
+                <div class="section-title">
+                    <span>🤖 智能识别提取</span>
+                    <el-button type="primary" link @click="showConfig = !showConfig">
+                        <el-icon><Setting /></el-icon>&nbsp;配置
+                    </el-button>
+                </div>
+                
+                <el-collapse-transition>
+                    <div v-show="showConfig" class="config-card">
+                        <el-form label-position="top" size="small">
+                            <el-form-item label="接口地址 (BaseURL)">
+                                <el-input v-model="config.baseUrl"></el-input>
+                            </el-form-item>
+                            <el-form-item label="API Key">
+                                <el-input v-model="config.apiKey" type="password" show-password></el-input>
+                            </el-form-item>
+                            <el-form-item label="模型名称 (Model)">
+                                <el-input v-model="config.model"></el-input>
+                            </el-form-item>
+                        </el-form>
+                    </div>
+                </el-collapse-transition>
+
+                <el-form label-position="top">
+                    <el-form-item label="输入自然语言描述(订单信息) - 支持多商品">
+                        <el-input 
+                            v-model="aiInput" 
+                            type="textarea" 
+                            :rows="4" 
+                            placeholder="例如：今天张三买了1台COLMO空调（单价3000），还有2个支架（配件，单价100）。地址是东青嘉园13乙，电话13588888888。">
+                        </el-input>
+                    </el-form-item>
+                    <el-button type="primary" style="width: 100%;" @click="analyzeText" :loading="isAnalyzing">
+                        🧠 AI 智能识别并填入表单
+                    </el-button>
+                </el-form>
+
+                <!-- 商品清单区块 -->
+                <div class="section-title" style="margin-top: 30px;">📦 商品清单</div>
+                
+                <div v-for="(item, index) in items" :key="item.id" class="item-card">
+                    <div class="item-card-header">
+                        <span>明细 #{{ index + 1 }}</span>
+                        <el-button type="danger" link @click="removeItem(index)">删除</el-button>
+                    </div>
+                    <el-row :gutter="10">
+                        <el-col :span="16">
+                            <el-form-item label="商品名称" style="margin-bottom: 10px;">
+                                <el-input v-model="item.productName" size="small"></el-input>
+                            </el-form-item>
+                        </el-col>
+                        <el-col :span="8">
+                            <el-form-item label="类别" style="margin-bottom: 10px;">
+                                <el-input v-model="item.category" size="small"></el-input>
+                            </el-form-item>
+                        </el-col>
+                    </el-row>
+                    <el-row :gutter="10">
+                        <el-col :span="12">
+                            <el-form-item label="数量" style="margin-bottom: 0;">
+                                <el-input-number v-model="item.quantity" :min="1" size="small" style="width: 100%;"></el-input-number>
+                            </el-form-item>
+                        </el-col>
+                        <el-col :span="12">
+                            <el-form-item label="单价" style="margin-bottom: 0;">
+                                <el-input-number v-model="item.unitPrice" :min="0" :precision="2" :step="10" size="small" style="width: 100%;"></el-input-number>
+                            </el-form-item>
+                        </el-col>
+                    </el-row>
+                </div>
+
+                <el-button plain border dashed @click="addItem" style="width: 100%; margin-bottom: 40px; border-style: dashed;">
+                    <el-icon><Plus /></el-icon> 添加商品
+                </el-button>
+            </div>
+        </el-drawer>
+
+        <!-- 右侧预览打印区 -->
+        <div class="preview-container">
+            <div class="receipt-paper">
+                <!-- 头部布局 -->
+                <div class="r-header">
+                    <div class="r-logo-wrap">
+                        <span class="r-logo-icon">H</span>
+                        <span class="r-logo-text">
+                            <span>汇通达</span>
+                            <span style="font-size:10px;font-weight:normal;color:#666;">HUITONGDA</span>
+                        </span>
+                    </div>
+                    <div class="r-title-wrap">
+                        <span class="r-title">{{ order.title || '销售专用票据' }}</span>
+                    </div>
+                    <div class="r-header-placeholder"></div>
+                </div>
+
+                <!-- 订单元数据 -->
+                <div class="r-meta-row">
+                    <div>票据编号：<span>{{ order.receiptNo }}</span></div>
+                    <div>顾客：<span>{{ order.customer }}</span></div>
+                    <div>联系电话：<span>{{ order.phone }}</span></div>
+                </div>
+                <div class="r-meta-row" style="margin-bottom: 15px;">
+                    <div>送货地址：<span>{{ order.address }}</span></div>
+                    <div>购货日期：<span>{{ order.date }}</span></div>
+                </div>
+
+                <!-- 表格区域 -->
+                <div class="r-body">
+                    <table class="r-table">
+                        <thead>
+                            <tr>
+                                <th style="width: 45%;">商品名称</th>
+                                <th style="width: 15%;">类别</th>
+                                <th style="width: 10%;">数量</th>
+                                <th style="width: 15%;">单价(元)</th>
+                                <th style="width: 15%;">金额(元)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Vue 渲染商品 -->
+                            <tr v-for="item in items" :key="item.id">
+                                <td style="text-align: left; padding-left:10px;">{{ item.productName }}</td>
+                                <td>{{ item.category }}</td>
+                                <td>{{ item.quantity }}</td>
+                                <td>{{ parseFloat(item.unitPrice).toFixed(2) }}</td>
+                                <td>{{ (item.quantity * item.unitPrice).toFixed(2) }}</td>
+                            </tr>
+                            <!-- 无商品时补空行保持样式 -->
+                            <tr v-if="items.length === 0">
+                                <td style="text-align: left; padding-left:10px;">&nbsp;</td>
+                                <td></td><td></td><td></td><td></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div class="r-summary-row">
+                        <div>合计金额： <span>{{ totalAmount.toFixed(2) }}</span> 元</div>
+                    </div>
+                    <div class="r-amount-row">
+                        <div>实收金额大写（人民币）：<span>{{ totalAmountUpper }}</span></div>
+                        <div>实收金额小写（人民币）：<span>{{ totalAmount.toFixed(2) }}</span></div>
+                    </div>
+                    <div class="r-notes-row">
+                        备注：<span>{{ order.remarks }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 打印按钮 -->
+            <div class="action-bar no-print">
+                <el-button type="success" size="large" @click="handlePrint">
+                    <el-icon><Printer /></el-icon>&nbsp;🖨️ 开始打印单据
+                </el-button>
+            </div>
         </div>
     </div>
 
-    <div id="shopSwitchMenu" class="shop-switch-menu"></div>
+    <!-- 引入 Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- 引入 Element Plus JS -->
+    <script src="https://unpkg.com/element-plus"></script>
+    <!-- 引入 Element Plus Icons -->
+    <script src="https://unpkg.com/@element-plus/icons-vue"></script>
 
-    <mdui-navigation-drawer id="orderDrawer" placement="right" modal close-on-overlay-click>
-        <div class="drawer-content">
-            <div class="drawer-header">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                    <mdui-button-icon id="closeDrawerBtn" icon="arrow_back"></mdui-button-icon>
-                    <span class="section-title" style="font-size: 20px;">门店订单列表</span>
-                </div>
-                <mdui-button id="refreshOrdersBtn" variant="text">刷新列表</mdui-button>
-            </div>
+    <script>
+        const { createApp, ref, reactive, computed, watch, onMounted } = Vue;
 
-            <div class="drawer-search">
-                <mdui-text-field id="orderSearchMobile" icon="search" placeholder="手机号或订单号" variant="outlined" clearable
-                    style="flex: 1;"></mdui-text-field>
-                <mdui-button id="searchOrdersBtn" variant="filled">搜索</mdui-button>
-            </div>
+        const app = createApp({
+            setup() {
+                const PREFIX = 'bossqcos_v2_';
 
-            <div class="drawer-filter">
-                <div id="orderFilterGroup" class="order-filter-chips">
-                    <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="0">未支付</mdui-chip>
-                    <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="2">已付款</mdui-chip>
-                    <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="5">已退款</mdui-chip>
-                    <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="4">已超时</mdui-chip>
-                    <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="queue">队列中</mdui-chip>
-                </div>
-            </div>
+                // UI 状态
+                const drawerVisible = ref(false);
+                const showConfig = ref(false);
+                const isAnalyzing = ref(false);
+                const aiInput = ref('');
 
-            <div id="orderListContainer" class="order-list">
-                <div
-                    style="grid-column: 1/-1; text-align: center; padding-top: 100px; color: #999; display: flex; flex-direction: column; align-items: center; gap: 10px;">
-                    <mdui-icon name="manage_search" style="font-size: 48px; opacity: 0.5;"></mdui-icon>
-                    <span>点击搜索获取订单数据</span>
-                </div>
-            </div>
-        </div>
-    </mdui-navigation-drawer>
+                // 大模型配置 (长期保存)
+                const config = reactive({
+                    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
+                    apiKey: '',
+                    model: 'doubao-seed-2-0-mini-260215'
+                });
 
-    <mdui-dialog id="detailDialog" close-on-overlay-click>
-        <div slot="headline" style="display: flex; align-items: center; gap: 8px; width: 100%;">
-            <span>订单详情</span>
-            <mdui-button id="detailPushBtn" variant="text"
-                style="display: none; margin-left: auto; color: rgb(var(--mdui-color-error));">补推送</mdui-button>
-        </div>
-        <div slot="description" style="overflow-y: auto;">
-            <div id="detailLoading" style="text-align: center; padding: 20px;">
-                <mdui-circular-progress></mdui-circular-progress>
-            </div>
-            <div id="detailContent" class="detail-grid" style="display: none;"></div>
-        </div>
-    </mdui-dialog>
+                // 订单基础信息 (除Title外，不保存)
+                const order = reactive({
+                    title: '销售专用票据',
+                    receiptNo: '',
+                    date: '',
+                    customer: '',
+                    phone: '',
+                    address: '',
+                    remarks: ''
+                });
 
-    <mdui-dialog id="qrDialog" close-on-overlay-click>
-        <span slot="headline">扫码支付</span>
-        <div slot="description" style="text-align: center;">
-            <p style="font-size: 14px; color: #666;">请使用建行生活、支付宝或微信扫一扫</p>
-            <div id="qrLoading" style="padding: 20px;"><mdui-circular-progress></mdui-circular-progress></div>
-            <img id="qrImage" class="qr-image" style="display: none;" alt="支付二维码">
-            <div style="font-size: 12px; color: #999; margin-top: 8px;">点击二维码可复制</div>
-        </div>
-        <mdui-button id="closeQrDialogBtn" slot="action" variant="text">关闭</mdui-button>
-        <mdui-button id="refreshQrBtn" slot="action" variant="tonal" icon="refresh">刷新</mdui-button>
-    </mdui-dialog>
+                // 商品列表 (不保存)
+                const items = ref([]);
 
-    <mdui-dialog id="configDialog" close-on-overlay-click>
-        <span slot="headline">系统设置</span>
-        <div slot="description" style="overflow-y: auto;">
-            <p style="margin-bottom: 16px; font-size: 13px; opacity: 0.7;">配置将保存到本地浏览器缓存中。</p>
+                // 初始化逻辑
+                onMounted(() => {
+                    // 读取配置
+                    const savedConfig = localStorage.getItem(PREFIX + 'config');
+                    if (savedConfig) {
+                        Object.assign(config, JSON.parse(savedConfig));
+                    }
+                    // 读取标题
+                    const savedTitle = localStorage.getItem(PREFIX + 'title');
+                    if (savedTitle) {
+                        order.title = savedTitle;
+                    }
 
-            <div class="config-payload-toolbar">
-                <div style="font-size: 14px; color: rgb(var(--mdui-color-primary)); font-weight: bold;">Login Payload
-                    (Code)</div>
-                <mdui-tooltip content="新增门店Payload">
-                    <mdui-button-icon id="addPayloadBtn" icon="add"></mdui-button-icon>
-                </mdui-tooltip>
-            </div>
-            <div id="payloadList" class="payload-list"></div>
+                    // 默认日期
+                    const now = new Date();
+                    order.date = `${now.getFullYear()}年${String(now.getMonth()+1).padStart(2,'0')}月${String(now.getDate()).padStart(2,'0')}日`;
+                    
+                    generateReceiptNo();
+                    addItem(); // 默认加一个空商品
+                });
 
-            <div
-                style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
-                钉钉推送配置
-            </div>
-            <mdui-text-field id="configDingWebhook" label="钉钉 Webhook" variant="outlined" clearable
-                style="margin-bottom: 16px;"></mdui-text-field>
-            <mdui-text-field id="configDingSecret" label="钉钉加签密钥 (Token/Secret)" variant="outlined"
-                clearable></mdui-text-field>
-            <div style="margin-top: 12px; text-align: right;">
-                <mdui-button id="testDingTalkBtn" variant="tonal" icon="send">测试钉钉消息</mdui-button>
-            </div>
+                // 监听持久化字段
+                watch(config, (newVal) => {
+                    localStorage.setItem(PREFIX + 'config', JSON.stringify(newVal));
+                }, { deep: true });
 
-            <div
-                style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
-                AI 智能识别配置 (OpenAI 兼容)
-            </div>
-            <mdui-switch id="configAiEnable" style="margin-bottom: 12px;">启用 AI 智能识别</mdui-switch>
-            <mdui-text-field id="configAiEndpoint" label="API Endpoint"
-                placeholder="例如: https://api.openai.com/v1/chat/completions" variant="outlined" clearable
-                style="margin-bottom: 12px;"></mdui-text-field>
-            <mdui-text-field id="configAiModel" label="模型名称" placeholder="例如: gpt-3.5-turbo, qwen-plus"
-                variant="outlined" clearable style="margin-bottom: 12px;"></mdui-text-field>
-            <mdui-text-field id="configAiKey" label="API Key" type="password" variant="outlined" clearable
-                style="margin-bottom: 12px;" toggle-password></mdui-text-field>
+                watch(() => order.title, (newVal) => {
+                    localStorage.setItem(PREFIX + 'title', newVal);
+                });
 
-            <div
-                style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
-                备份与还原
-            </div>
-            <p style="margin-bottom: 12px; font-size: 12px; opacity: 0.6;">导出配置为文本以便备份或在其他设备导入。</p>
-            <div class="backup-btns">
-                <mdui-button id="exportConfigBtn" variant="tonal" icon="file_download">导出配置</mdui-button>
-                <mdui-button id="importConfigBtn" variant="tonal" icon="file_upload">导入配置</mdui-button>
-            </div>
-        </div>
-        <mdui-button id="closeConfigDialogBtn" slot="action" variant="text">取消</mdui-button>
-        <mdui-button id="saveConfigBtn" slot="action" variant="filled">保存配置并重连</mdui-button>
-    </mdui-dialog>
+                // 生成随机单号
+                const generateReceiptNo = () => {
+                    const now = new Date();
+                    const dateStr = now.getFullYear().toString() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
+                    const rand1 = Math.floor(Math.random() * 90000) + 10000; 
+                    const rand2 = Math.floor(Math.random() * 900000) + 100000; 
+                    order.receiptNo = `HTD-${rand1}-${dateStr}${rand2}`;
+                };
 
-    <mdui-dialog id="importConfigDialog" close-on-overlay-click>
-        <span slot="headline">导入系统配置</span>
-        <div slot="description">
-            <p style="margin-bottom: 12px; font-size: 13px; opacity: 0.7;">请在下方框内粘贴您之前导出的配置字符串：</p>
-            <mdui-text-field id="importConfigRawInput" label="配置内容" rows="5" variant="outlined"
-                placeholder='{"stores": [...] }'></mdui-text-field>
-        </div>
-        <mdui-button id="cancelImportBtn" slot="action" variant="text">取消</mdui-button>
-        <mdui-button id="confirmImportBtn" slot="action" variant="filled">执行导入</mdui-button>
-    </mdui-dialog>
+                // 添加/删除商品
+                const addItem = (data = {}) => {
+                    items.value.push({
+                        id: Date.now() + Math.random(),
+                        productName: data.productName || '',
+                        category: data.category || '',
+                        quantity: Number(data.quantity) || 1,
+                        unitPrice: Number(data.unitPrice) || 0
+                    });
+                };
+                const removeItem = (index) => {
+                    items.value.splice(index, 1);
+                };
 
-    <mdui-dialog id="errorDialog" close-on-overlay-click>
-        <span slot="headline">提示</span>
-        <div slot="description" id="errorContent">发生错误</div>
-        <mdui-button id="closeErrorDialogBtn" slot="action" variant="text">关闭</mdui-button>
-    </mdui-dialog>
+                // 计算属性
+                const totalAmount = computed(() => {
+                    return items.value.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+                });
 
-    <mdui-dialog id="confirmDialog" close-on-overlay-click>
-        <span slot="headline">取消订单确认</span>
-        <div slot="description">您确定要取消该订单吗？此操作不可撤销。</div>
-        <mdui-button id="closeConfirmDialogBtn" slot="action" variant="text">暂不取消</mdui-button>
-        <mdui-button id="confirmCancelBtn" slot="action" variant="filled"
-            style="background-color: rgb(var(--mdui-color-error)); color: white;">确认取消</mdui-button>
-    </mdui-dialog>
+                // 数字转中文大写
+                const numberToChinese = (money) => {
+                    var cnNums = ["零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖"];
+                    var cnIntRadice = ["", "拾", "佰", "仟"];
+                    var cnIntUnits = ["", "万", "亿", "兆"];
+                    var cnDecUnits = ["角", "分", "毫", "厘"];
+                    var cnInteger = "整";
+                    var cnIntLast = "元";
+                    var maxNum = 999999999999999.9999;
+                    if (!money) return "零元整";
+                    money = parseFloat(money);
+                    if (money >= maxNum) return "";
+                    if (money == 0) return cnNums[0] + cnIntLast + cnInteger;
+                    
+                    money = money.toString();
+                    let IntegerNum, DecimalNum;
+                    if (money.indexOf(".") == -1) { IntegerNum = money; DecimalNum = ''; } 
+                    else { 
+                        let parts = money.split("."); 
+                        IntegerNum = parts[0]; 
+                        DecimalNum = parts[1].substr(0, 4); 
+                    }
+                    
+                    let ChineseStr = "";
+                    if (parseInt(IntegerNum, 10) > 0) {
+                        let zeroCount = 0; let IntLen = IntegerNum.length;
+                        for (let i = 0; i < IntLen; i++) {
+                            let n = IntegerNum.substr(i, 1); let p = IntLen - i - 1; let q = Math.floor(p / 4); let m = p % 4;
+                            if (n == "0") { zeroCount++; } 
+                            else {
+                                if (zeroCount > 0) { ChineseStr += cnNums[0]; }
+                                zeroCount = 0; ChineseStr += cnNums[parseInt(n)] + cnIntRadice[m];
+                            }
+                            if (m == 0 && zeroCount < 4) { ChineseStr += cnIntUnits[q]; }
+                        }
+                        ChineseStr += cnIntLast;
+                    }
+                    if (DecimalNum != '') {
+                        let decLen = DecimalNum.length;
+                        for (let i = 0; i < decLen; i++) {
+                            let n = DecimalNum.substr(i, 1);
+                            if (n != '0') { ChineseStr += cnNums[Number(n)] + cnDecUnits[i]; }
+                        }
+                    }
+                    if (ChineseStr == '') { ChineseStr += cnNums[0] + cnIntLast + cnInteger; } 
+                    else if (DecimalNum == '') { ChineseStr += cnInteger; }
+                    return ChineseStr;
+                };
 
-    <mdui-dialog id="refundConfirmDialog" close-on-overlay-click>
-        <span slot="headline">退款确认</span>
-        <div slot="description">您确定要对该订单发起退款吗？此操作将执行全额退款。</div>
-        <mdui-button id="closeRefundDialogBtn" slot="action" variant="text">暂不退款</mdui-button>
-        <mdui-button id="confirmRefundBtn" slot="action" variant="filled"
-            style="background-color: rgb(var(--mdui-color-error)); color: white;">确认退款</mdui-button>
-    </mdui-dialog>
+                const totalAmountUpper = computed(() => numberToChinese(totalAmount.value));
 
-    <mdui-dialog id="pushConfirmDialog" close-on-overlay-click>
-        <span slot="headline">推送确认</span>
-        <div slot="description" style="overflow-y: auto;">
-            <div style="margin-bottom: 12px;">请输入完整手机号，已推送的不要重复推送</div>
-            <mdui-text-field id="pushMobileInput" label="手机号" variant="outlined" clearable></mdui-text-field>
-        </div>
-        <mdui-button id="closePushDialogBtn" slot="action" variant="text">取消</mdui-button>
-        <mdui-button id="confirmPushBtn" slot="action" variant="filled">确认推送</mdui-button>
-    </mdui-dialog>
+                // 调用打印
+                const handlePrint = () => {
+                    drawerVisible.value = false;
+                    setTimeout(() => {
+                        window.print();
+                    }, 300); // 留点时间给抽屉关上动画
+                };
 
-    <div class="container">
-        <mdui-card variant="filled">
-            <div class="section-header">
-                <span class="section-title">智能填充</span>
-                <mdui-button id="smartParseBtn" variant="tonal" class="btn-small">智能识别</mdui-button>
-            </div>
-            <mdui-text-field id="smartInput" rows="2" variant="outlined" clearable placeholder="在此粘贴：
- 手机号 区 街道 小区门牌"></mdui-text-field>
-        </mdui-card>
+                // AI 识别分析
+                const analyzeText = async () => {
+                    const text = aiInput.value.trim();
+                    if (!text) {
+                        ElementPlus.ElMessage.warning('请输入需要识别的文本！');
+                        return;
+                    }
+                    if (!config.baseUrl || !config.apiKey) {
+                        showConfig.value = true;
+                        ElementPlus.ElMessage.error('请先配置大模型的 BaseURL 和 API Key！');
+                        return;
+                    }
 
-        <mdui-card variant="filled">
-            <div class="section-header">
-                <span class="section-title">补贴资格申领人信息</span>
-                <mdui-button id="checkQualificationBtn" variant="tonal" class="btn-small">资格核验</mdui-button>
-            </div>
-            <mdui-text-field id="buyerMobile" label="手机号" variant="outlined" clearable></mdui-text-field>
-            <div id="productCategoryChips" class="chip-container readonly-chips">
-                <mdui-chip variant="filter" selectable value="A01">电视</mdui-chip>
-                <mdui-chip variant="filter" selectable value="A02">冰箱</mdui-chip>
-                <mdui-chip variant="filter" selectable value="A03">洗衣机</mdui-chip>
-                <mdui-chip variant="filter" selectable value="A04">空调</mdui-chip>
-                <mdui-chip variant="filter" selectable value="A05">电脑</mdui-chip>
-                <mdui-chip variant="filter" selectable value="A06">热水器</mdui-chip>
-                <mdui-chip variant="filter" selectable value="B01">手机</mdui-chip>
-                <mdui-chip variant="filter" selectable value="B02">平板</mdui-chip>
-                <mdui-chip variant="filter" selectable value="B03">手表手环</mdui-chip>
-                <mdui-chip variant="filter" selectable value="B04">智能眼镜</mdui-chip>
-            </div>
-            <input type="hidden" id="buyerName">
-        </mdui-card>
+                    isAnalyzing.value = true;
+                    const prompt = `
+你是一个订单信息提取助手。请从以下文本中提取订单信息，并严格以JSON格式输出。
+如果没有提到的字段，请输出空字符串 ""。数字类型的请输出纯数字。如果有多个商品请提取为数组。
+需要返回的JSON结构如下：
+{
+  "customer": "顾客姓名",
+  "phone": "联系电话",
+  "address": "送货地址",
+  "remarks": "备注信息",
+  "items": [
+    {
+      "productName": "商品名称",
+      "category": "类别(如 空调、配件等)",
+      "quantity": 数量(纯数字),
+      "unitPrice": 单价(纯数字)
+    }
+  ]
+}
 
-        <mdui-card variant="filled">
-            <div class="section-header">
-                <span class="section-title">门店订单信息</span>
-                <mdui-checkbox id="autoOrderNumCheckbox" checked>自动单号</mdui-checkbox>
-            </div>
-            <mdui-text-field id="shopOrderNumber" label="销售单号" placeholder="请输入订单号" disabled value="提交时自动生成（上一单单号 +1）"
-                variant="outlined"></mdui-text-field>
-            <div class="row">
-                <mdui-select id="citySelect" label="城市" variant="outlined"></mdui-select>
-                <mdui-select id="districtSelect" label="区县" variant="outlined"></mdui-select>
-            </div>
-            <div class="row">
-                <mdui-select id="townSelect" label="乡镇/街道" variant="outlined"></mdui-select>
-            </div>
-            <mdui-text-field id="detailAddress" label="详细地址" variant="outlined" clearable></mdui-text-field>
-        </mdui-card>
+待提取订单文本：
+"${text}"
 
-        <mdui-card variant="filled">
-            <div class="section-header">
-                <span class="section-title">商品信息</span>
-            </div>
-            <mdui-text-field id="goodsCode" label="商品编号" variant="outlined" clearable></mdui-text-field>
-            <mdui-select id="goodsName" label="商品名称 (可点选最近记录)" placeholder="自动计算" variant="outlined"></mdui-select>
-            <div class="row">
-                <mdui-text-field id="filingPrice" label="备案价" placeholder="自动计算" variant="outlined"
-                    readonly></mdui-text-field>
-                <mdui-text-field id="shopPrice" label="门店单价" type="number" placeholder="请输入价格" variant="outlined"
-                    clearable></mdui-text-field>
-            </div>
-            <div class="row">
-                <mdui-text-field id="actualPrice" label="实付单价" type="number" placeholder="自动计算" variant="outlined"
-                    readonly></mdui-text-field>
-                <mdui-text-field id="subsidyPrice" label="补贴价格" type="number" placeholder="自动计算" variant="outlined"
-                    readonly></mdui-text-field>
-            </div>
-        </mdui-card>
-        <mdui-card variant="filled">
-            <div class="section-header">
-                <span class="section-title">SN码查询（仅 3C）</span>
-                <mdui-button id="checkSncodeBtn" variant="tonal" class="btn-small">查询</mdui-button>
-            </div>
-            <mdui-text-field id="sncode" label="SN码" variant="outlined" clearable></mdui-text-field>
-        </mdui-card>
-    </div>
+请直接输出包含上述键名的JSON对象，不要加多余文字或markdown代码块标记。`;
 
-    <div class="footer-info" id="versionTrigger">版本号：加载中...</div>
+                    try {
+                        let apiUrl = config.baseUrl;
+                        if (!apiUrl.endsWith('/chat/completions')) {
+                            apiUrl = apiUrl.replace(/\/$/, '') + '/chat/completions';
+                        }
 
-    <mdui-fab class="fab-submit" id="submitOrderBtn" icon="check" variant="primary" extended>立即提交</mdui-fab>
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${config.apiKey}`
+                            },
+                            body: JSON.stringify({
+                                model: config.model,
+                                messages: [{ role: "user", content: prompt }],
+                                temperature: 0.1
+                            })
+                        });
 
-    <div id="debugLogPanel" class="debug-log-panel">
-        <div class="log-header">
-            <span style="font-weight: bold; color: rgb(var(--mdui-color-primary));">调试日志</span>
-            <div style="display: flex; gap: 8px;">
-                <mdui-button id="openLsEditorBtn" variant="text" size="small">存储(Storage)</mdui-button>
-                <mdui-button id="clearDebugLogsBtn" variant="text" size="small">清空</mdui-button>
-                <mdui-button-icon id="closeLogPanelBtn" icon="close" size="small"></mdui-button-icon>
-            </div>
-        </div>
-        <div id="debugLogContent" class="log-content"></div>
-    </div>
+                        if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
 
-    <mdui-dialog id="lsEditorDialog" close-on-overlay-click>
-        <span slot="headline">LocalStorage 管理</span>
-        <div slot="description" style="overflow-y: auto; max-height: 60vh;">
-            <div style="display: flex; gap: 8px; margin-bottom: 16px;">
-                <mdui-text-field id="newLsKey" label="输入新的 Key" variant="outlined" style="flex: 1;"></mdui-text-field>
-                <mdui-button id="addNewLsItemBtn" variant="tonal" style="height: 56px;">添加</mdui-button>
-            </div>
-            <div id="lsItemList" style="display: flex; flex-direction: column; gap: 12px;"></div>
-        </div>
-        <mdui-button id="closeLsEditorBtn" slot="action" variant="text">关闭</mdui-button>
-        <mdui-button id="refreshLsEditorBtn" slot="action" variant="text">刷新列表</mdui-button>
-        <mdui-button id="clearAllLsBtn" slot="action" variant="text" style="color: rgb(var(--mdui-color-error));">清空所有</mdui-button>
-    </mdui-dialog>
+                        const data = await response.json();
+                        let aiContent = data.choices[0].message.content.trim();
+                        aiContent = aiContent.replace(/^```json/i, '').replace(/^```/, '').replace(/```$/, '').trim();
 
-    <script src="app.js"></script>
+                        const result = JSON.parse(aiContent);
+
+                        // 填入基础信息
+                        const mapKeys = ['customer', 'phone', 'address', 'remarks'];
+                        mapKeys.forEach(k => {
+                            if (result[k] !== undefined && result[k] !== "") {
+                                order[k] = result[k];
+                            }
+                        });
+
+                        // 填入商品信息
+                        if (result.items && Array.isArray(result.items)) {
+                            items.value = []; // 清空现有
+                            result.items.forEach(item => {
+                                addItem(item);
+                            });
+                        }
+
+                        ElementPlus.ElMessage.success('AI 识别成功并已填入表单！');
+                    } catch (error) {
+                        console.error(error);
+                        ElementPlus.ElMessage.error("识别失败，请检查模型配置是否正确。\n" + error.message);
+                    } finally {
+                        isAnalyzing.value = false;
+                    }
+                };
+
+                return {
+                    drawerVisible, showConfig, isAnalyzing, aiInput,
+                    config, order, items, totalAmount, totalAmountUpper,
+                    generateReceiptNo, addItem, removeItem, handlePrint, analyzeText
+                };
+            }
+        });
+
+        // 全局注册 Element Plus 图标
+        for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+            app.component(key, component);
+        }
+        
+        app.use(ElementPlus);
+        app.mount('#app');
+    </script>
 </body>
-
 </html>

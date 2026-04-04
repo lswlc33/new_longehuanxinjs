@@ -6,11 +6,51 @@
     <title>单据生成系统</title>
     <style>
         /* 全局样式 */
-        body { font-family: 'Microsoft YaHei', SimHei, sans-serif; margin: 0; padding: 0; background-color: #f0f2f5; display: flex; height: 100vh; overflow: hidden; }
+        body { font-family: 'Microsoft YaHei', SimHei, sans-serif; margin: 0; padding: 0; background-color: #f0f2f5; }
         * { box-sizing: border-box; }
 
-        /* 左侧控制台样式 */
-        .sidebar { width: 450px; background: #fff; padding: 20px; box-shadow: 2px 0 5px rgba(0,0,0,0.1); overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        /* 悬浮切换按钮 */
+        .toggle-btn {
+            position: fixed;
+            left: 20px;
+            top: 20px;
+            z-index: 1002; /* 层级最高，悬浮在控制台之上 */
+            background-color: #1677ff;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            transition: background 0.3s;
+        }
+        .toggle-btn:hover { background-color: #4096ff; }
+
+        /* 左侧悬浮控制台（抽屉弹窗样式） */
+        .sidebar { 
+            position: fixed;
+            left: 0;
+            top: 0;
+            height: 100vh;
+            width: 450px; 
+            background: #fff; 
+            padding: 20px; 
+            padding-top: 65px; /* 避开悬浮按钮 */
+            box-shadow: 4px 0 15px rgba(0,0,0,0.15); 
+            overflow-y: auto; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 15px;
+            z-index: 1001;
+            /* 侧滑动画 */
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+        }
+        .sidebar.open { 
+            transform: translateX(0); /* 展开时滑入 */
+        }
+        
         .sidebar h3 { margin: 0 0 10px 0; font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 5px; color: #333; display: flex; justify-content: space-between; align-items: center;}
         
         .form-group { display: flex; flex-direction: column; margin-bottom: 10px; }
@@ -21,8 +61,6 @@
         
         button { background-color: #1677ff; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background 0.3s; }
         button:hover { background-color: #4096ff; }
-        button.btn-success { background-color: #52c41a; }
-        button.btn-success:hover { background-color: #73d13d; }
         button.btn-danger { background-color: #ff4d4f; padding: 4px 8px; font-size: 12px;}
         button.btn-danger:hover { background-color: #ff7875; }
         button.btn-icon { background: none; border: none; padding: 0; color: #666; cursor: pointer; font-size: 16px; margin-left: 5px;}
@@ -36,17 +74,29 @@
         /* 大模型配置区隐藏 */
         #config_panel { display: none; background: #f9f9f9; padding: 10px; border-radius: 6px; border: 1px solid #ddd; }
 
-        /* 右侧预览区样式 */
-        .preview-container { flex: 1; padding: 40px; overflow-y: auto; display: flex; justify-content: center; align-items: flex-start; }
+        /* === 预览区外部容器 === */
+        .preview-container { 
+            width: 100%; 
+            padding: 40px; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; /* 居中显示 */
+        }
         
         /* === 打印单据核心样式 === */
         .receipt-paper { width: 210mm; background: #fff; padding: 20px 40px; box-shadow: 0 0 10px rgba(0,0,0,0.1); color: #000; }
         
-        /* 头部 */
-        .r-header { display: flex; align-items: center; justify-content: center; position: relative; margin-bottom: 20px; }
-        .r-logo { position: absolute; left: 0; top: 0; display: flex; align-items: center; color: #f28b00; font-weight: bold; font-size: 20px;}
+        /* 头部：利用Flex划分三等分，绝对防重合且保证居中 */
+        .r-header { display: flex; align-items: flex-start; margin-bottom: 20px; }
+        
+        .r-logo-wrap { width: 25%; display: flex; align-items: center; flex-direction: row; color: #f28b00; font-weight: bold; font-size: 20px; line-height: 1.2; }
         .r-logo-icon { background: #f28b00; color: #fff; width: 24px; height: 24px; border-radius: 4px; display: inline-flex; justify-content: center; align-items: center; margin-right: 5px; font-size: 16px;}
-        .r-title { font-size: 22px; font-weight: bold; letter-spacing: 1px; }
+        .r-logo-text { display: flex; flex-direction: column; }
+
+        .r-title-wrap { width: 50%; text-align: center; }
+        .r-title { font-size: 22px; font-weight: bold; letter-spacing: 1px; display: inline-block; }
+        
+        .r-header-placeholder { width: 25%; } /* 右侧占位，用于将标题强制推在正中 */
 
         /* Meta信息 */
         .r-meta-row { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; }
@@ -59,31 +109,62 @@
         .r-table th { font-weight: normal; }
         
         /* 合并区域行 */
-        .r-summary-row { padding: 15px 10px; border-bottom: 1px dashed #000; display: flex; gap: 40px; font-size: 15px; }
+        .r-summary-row { padding: 15px 10px; border-bottom: 1px dashed #000; display: flex; justify-content: flex-end; font-size: 16px; font-weight: bold;}
         .r-amount-row { padding: 15px 10px; border-bottom: 1px dashed #000; display: flex; gap: 60px; font-size: 15px; }
         .r-notes-row { padding: 15px 10px; font-size: 15px; min-height: 60px; }
 
-        /* 打印媒体查询 */
+        /* 底部打印按钮区 */
+        .action-bar { margin-top: 30px; text-align: center; }
+        .btn-print { background-color: #52c41a; font-size: 18px; padding: 12px 30px; border-radius: 8px; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .btn-print:hover { background-color: #73d13d; }
+
+        /* === 打印媒体查询 === */
         @media print {
-            body { background: #fff; display: block; height: auto; overflow: visible; }
-            .sidebar { display: none; }
-            .preview-container { padding: 0; display: block; box-shadow: none; }
-            .receipt-paper { width: 100%; padding: 0; box-shadow: none; }
+            body { background: #fff; padding: 0; }
+            .toggle-btn { display: none !important; } 
+            .sidebar { display: none !important; }
+            .action-bar { display: none !important; } /* 打印时隐藏打印按钮 */
+            .preview-container { padding: 0; display: block; }
+            .receipt-paper { width: 100%; padding: 0; box-shadow: none; margin: 0 auto; }
             @page { size: A4 portrait; margin: 15mm; }
         }
     </style>
 </head>
 <body>
 
-    <!-- 左侧控制台 -->
-    <div class="sidebar">
+    <!-- 悬浮控制按钮 -->
+    <button class="toggle-btn" id="toggleBtn" onclick="toggleSidebar()">☰ 展开控制台</button>
+
+    <!-- 左侧悬浮抽屉控制台 -->
+    <div class="sidebar" id="sidebar">
+        <div>
+            <h3>📝 订单基础数据</h3>
+            <div class="form-group">
+                <label>票据大标题</label>
+                <input type="text" id="f_title" oninput="updatePreview()" placeholder="例如：销售专用票据">
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>票据编号 <button class="btn-icon" onclick="generateReceiptNo()">🔄生成</button></label>
+                    <input type="text" id="f_receiptNo" oninput="updatePreview()">
+                </div>
+                <div class="form-group"><label>购货日期</label><input type="text" id="f_date" oninput="updatePreview()"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>顾客姓名</label><input type="text" id="f_customer" oninput="updatePreview()"></div>
+                <div class="form-group"><label>联系电话</label><input type="text" id="f_phone" oninput="updatePreview()"></div>
+            </div>
+            <div class="form-group"><label>送货地址</label><input type="text" id="f_address" oninput="updatePreview()"></div>
+            <div class="form-group"><label>备注</label><input type="text" id="f_remarks" oninput="updatePreview()"></div>
+        </div>
+
         <div>
             <h3>
                 <span>🤖 智能识别提取</span>
                 <button class="btn-icon" title="配置大模型" onclick="toggleConfig()">⚙️配置</button>
             </h3>
             
-            <!-- 大模型配置面板 (默认隐藏) -->
             <div id="config_panel">
                 <div class="form-group">
                     <label>接口地址 (BaseURL)</label>
@@ -101,30 +182,9 @@
 
             <div class="form-group">
                 <label>输入自然语言描述(订单信息) - 支持多个商品</label>
-                <textarea id="ai_input" rows="4" placeholder="例如：今天蒋晓良买了1台COLMO采暖炉（空调，单价3元），还有2根铜管（配件，单价100元）。地址是东青嘉园13乙1506，电话13584594778，优惠了50元。"></textarea>
+                <textarea id="ai_input" rows="4" placeholder="例如：今天蒋晓良买了1台COLMO采暖炉（空调，单价3000元），还有2根铜管（配件，单价100元）。地址是东青嘉园13乙1506，电话13584594778。"></textarea>
             </div>
             <button id="btn_analyze" onclick="analyzeText()">🧠 AI 智能识别并填入表单</button>
-        </div>
-
-        <div>
-            <h3>📝 订单基础数据</h3>
-            <div class="form-row">
-                <div class="form-group">
-                    <label>票据编号 <button class="btn-icon" onclick="generateReceiptNo()">🔄生成</button></label>
-                    <input type="text" id="f_receiptNo" oninput="updatePreview()">
-                </div>
-                <div class="form-group"><label>购货日期</label><input type="text" id="f_date" oninput="updatePreview()"></div>
-            </div>
-            <div class="form-row">
-                <div class="form-group"><label>顾客姓名</label><input type="text" id="f_customer" oninput="updatePreview()"></div>
-                <div class="form-group"><label>联系电话</label><input type="text" id="f_phone" oninput="updatePreview()"></div>
-            </div>
-            <div class="form-group"><label>送货地址</label><input type="text" id="f_address" oninput="updatePreview()"></div>
-            
-            <div class="form-row">
-                <div class="form-group"><label>整单优惠(元)</label><input type="number" id="f_discount" value="0" oninput="updatePreview()"></div>
-            </div>
-            <div class="form-group"><label>备注</label><input type="text" id="f_remarks" oninput="updatePreview()"></div>
         </div>
 
         <div>
@@ -134,20 +194,32 @@
             </div>
             <button onclick="addEmptyItem()" style="width: 100%; background: #fff; color: #1677ff; border: 1px dashed #1677ff;">+ 添加商品</button>
         </div>
-
-        <button class="btn-success" onclick="window.print()">🖨️ 打印单据</button>
     </div>
 
-    <!-- 右侧打印预览区 -->
+    <!-- 右侧打印预览区（居中独立） -->
     <div class="preview-container">
+        <!-- 打印纸张实体 -->
         <div class="receipt-paper">
+            
+            <!-- 分块布局的头部 -->
             <div class="r-header">
-                <div class="r-logo">
-                    <span class="r-logo-icon">H</span>汇通达<br><span style="font-size:10px;font-weight:normal;color:#666;">HUITONGDA</span>
+                <!-- 1. 左侧 Logo 区 -->
+                <div class="r-logo-wrap">
+                    <span class="r-logo-icon">H</span>
+                    <span class="r-logo-text">
+                        <span>汇通达</span>
+                        <span style="font-size:10px;font-weight:normal;color:#666;">HUITONGDA</span>
+                    </span>
                 </div>
-                <div class="r-title">常州市能晟冷暖设备工程有限公司销售专用票据</div>
+                <!-- 2. 中间 标题 区 -->
+                <div class="r-title-wrap">
+                    <span class="r-title" id="p_title">销售专用票据</span>
+                </div>
+                <!-- 3. 右侧 空白占位 区 -->
+                <div class="r-header-placeholder"></div>
             </div>
 
+            <!-- 数据区块 -->
             <div class="r-meta-row">
                 <div>票据编号：<span id="p_receiptNo"></span></div>
                 <div>顾客：<span id="p_customer"></span></div>
@@ -170,22 +242,25 @@
                         </tr>
                     </thead>
                     <tbody id="p_items_tbody">
-                        <!-- 商品列表通过JS动态生成 -->
+                        <!-- 商品列表 -->
                     </tbody>
                 </table>
                 <div class="r-summary-row">
-                    <div>总计： <span id="p_total">0.00</span>元</div>
-                    <div>优惠金额： <span id="p_discount">0.00</span></div>
-                    <div>成交总价： <span id="p_finalPrice">0.00</span></div>
+                    <div>合计金额： <span id="p_total">0.00</span> 元</div>
                 </div>
                 <div class="r-amount-row">
                     <div>实收金额大写（人民币）：<span id="p_amountUpper">零元整</span></div>
-                    <div>实收金额小写（人民币）：<span id="p_amountLower">0</span></div>
+                    <div>实收金额小写（人民币）：<span id="p_amountLower">0.00</span></div>
                 </div>
                 <div class="r-notes-row">
                     备注：<span id="p_remarks"></span>
                 </div>
             </div>
+        </div>
+        
+        <!-- 打印按钮移至单据下方独立区域 -->
+        <div class="action-bar">
+            <button class="btn-print" onclick="window.print()">🖨️ 打印单据</button>
         </div>
     </div>
 
@@ -195,32 +270,28 @@
 
         // 初始化加载
         window.onload = function() {
-            // 配置大模型默认值（火山引擎豆包）
+            // 1. 恢复大模型配置 (长期保存)
             loadFromStorage('cfg_baseurl', 'https://ark.cn-beijing.volces.com/api/v3/chat/completions');
             loadFromStorage('cfg_key', '');
             loadFromStorage('cfg_model', 'doubao-seed-2-0-mini-260215');
             
-            // 绑定配置输入框变化保存 localStorage
             ['cfg_baseurl', 'cfg_key', 'cfg_model'].forEach(id => {
                 document.getElementById(id).addEventListener('change', (e) => {
                     localStorage.setItem(PREFIX + e.target.id, e.target.value);
                 });
             });
 
-            // 恢复基础表单（如果有的话）
-            ['f_customer', 'f_phone', 'f_address', 'f_remarks', 'f_discount'].forEach(id => {
-                const saved = localStorage.getItem(PREFIX + id);
-                if(saved) document.getElementById(id).value = saved;
-                document.getElementById(id).addEventListener('change', (e) => {
-                    localStorage.setItem(PREFIX + e.target.id, e.target.value);
-                });
+            // 2. 恢复票据大标题
+            const titleEl = document.getElementById('f_title');
+            const savedTitle = localStorage.getItem(PREFIX + 'f_title');
+            titleEl.value = savedTitle ? savedTitle : '销售专用票据';
+            titleEl.addEventListener('change', (e) => {
+                localStorage.setItem(PREFIX + 'f_title', e.target.value);
             });
 
-            // 初始化购货日期
-            if(!document.getElementById('f_date').value){
-                const now = new Date();
-                document.getElementById('f_date').value = `${now.getFullYear()}年${String(now.getMonth()+1).padStart(2,'0')}月${String(now.getDate()).padStart(2,'0')}日`;
-            }
+            // 初始化购货日期为今天
+            const now = new Date();
+            document.getElementById('f_date').value = `${now.getFullYear()}年${String(now.getMonth()+1).padStart(2,'0')}月${String(now.getDate()).padStart(2,'0')}日`;
             
             // 初始化单号
             generateReceiptNo();
@@ -228,6 +299,19 @@
             // 初始默认添加一个空白商品行
             addEmptyItem();
         };
+
+        // 切换侧边栏展开/收起 (控制 transform 滑动)
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const btn = document.getElementById('toggleBtn');
+            if (sidebar.classList.contains('open')) {
+                sidebar.classList.remove('open');
+                btn.innerText = '☰ 展开控制台';
+            } else {
+                sidebar.classList.add('open');
+                btn.innerText = '✕ 收起控制台';
+            }
+        }
 
         function loadFromStorage(id, defaultValue) {
             const el = document.getElementById(id);
@@ -240,23 +324,20 @@
             }
         }
 
-        // 显示/隐藏配置面板
         function toggleConfig() {
             const panel = document.getElementById('config_panel');
             panel.style.display = panel.style.display === 'none' || panel.style.display === '' ? 'block' : 'none';
         }
 
-        // 自动生成随机单号
         function generateReceiptNo() {
             const now = new Date();
             const dateStr = now.getFullYear().toString() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
-            const rand1 = Math.floor(Math.random() * 90000) + 10000; // 5位数
-            const rand2 = Math.floor(Math.random() * 900000) + 100000; // 6位数
+            const rand1 = Math.floor(Math.random() * 90000) + 10000; 
+            const rand2 = Math.floor(Math.random() * 900000) + 100000; 
             document.getElementById('f_receiptNo').value = `HTD-${rand1}-${dateStr}${rand2}`;
             updatePreview();
         }
 
-        // 动态添加一个商品表单
         function addEmptyItem(data = { productName: '', category: '', quantity: 1, unitPrice: 0 }) {
             const container = document.getElementById('items_container');
             const id = 'item_' + (++itemCounter);
@@ -285,7 +366,6 @@
             updatePreview();
         }
 
-        // 数字转中文大写
         function numberToChinese(money) {
             var cnNums = new Array("零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖");
             var cnIntRadice = new Array("", "拾", "佰", "仟");
@@ -329,16 +409,18 @@
 
         // 更新预览区
         function updatePreview() {
-            // 基础信息
-            const fields = ['receiptNo', 'date', 'customer', 'phone', 'address', 'remarks'];
+            const fields = ['title', 'receiptNo', 'date', 'customer', 'phone', 'address', 'remarks'];
             fields.forEach(f => {
-                document.getElementById('p_' + f).innerText = document.getElementById('f_' + f).value;
+                const previewEl = document.getElementById('p_' + f);
+                const inputEl = document.getElementById('f_' + f);
+                if(previewEl && inputEl) {
+                    previewEl.innerText = inputEl.value;
+                }
             });
 
-            // 获取所有商品列表计算
             const itemBoxes = document.querySelectorAll('.item-box');
             const tbody = document.getElementById('p_items_tbody');
-            tbody.innerHTML = ''; // 清空表格
+            tbody.innerHTML = ''; 
             
             let totalAmount = 0;
 
@@ -361,21 +443,13 @@
                 tbody.appendChild(tr);
             });
 
-            // 补齐至少一行空行，保持样式好看
             if (itemBoxes.length === 0) {
                 tbody.innerHTML = `<tr><td style="text-align: left; padding-left:10px;">&nbsp;</td><td></td><td></td><td></td><td></td></tr>`;
             }
 
-            // 计算总金额
-            const discount = parseFloat(document.getElementById('f_discount').value) || 0;
-            const finalPrice = totalAmount - discount;
-
             document.getElementById('p_total').innerText = totalAmount.toFixed(2);
-            document.getElementById('p_discount').innerText = discount.toFixed(2);
-            document.getElementById('p_finalPrice').innerText = finalPrice.toFixed(2);
-
-            document.getElementById('p_amountLower').innerText = finalPrice;
-            document.getElementById('p_amountUpper').innerText = numberToChinese(finalPrice);
+            document.getElementById('p_amountLower').innerText = totalAmount.toFixed(2);
+            document.getElementById('p_amountUpper').innerText = numberToChinese(totalAmount);
         }
 
         // 大模型识别功能
@@ -388,7 +462,8 @@
 
             if (!text) return alert("请输入需要识别的文本！");
             if (!url || !key) {
-                toggleConfig(); // 展开配置面板提醒
+                if(!document.getElementById('sidebar').classList.contains('open')) toggleSidebar();
+                toggleConfig(); 
                 return alert("请先配置大模型的 BaseURL 和 API Key！");
             }
 
@@ -403,7 +478,6 @@
   "customer": "顾客姓名",
   "phone": "联系电话",
   "address": "送货地址",
-  "discount": "整单优惠金额(纯数字)",
   "remarks": "备注信息",
   "items": [
     {
@@ -446,24 +520,19 @@
                 const data = await response.json();
                 let aiContent = data.choices[0].message.content.trim();
                 
-                // 剔除 markdown 标记
                 aiContent = aiContent.replace(/^```json/i, '').replace(/^```/, '').replace(/```$/, '').trim();
 
                 const result = JSON.parse(aiContent);
 
-                // 填入基础信息
-                const mapKeys = ['customer', 'phone', 'address', 'discount', 'remarks'];
+                const mapKeys = ['customer', 'phone', 'address', 'remarks'];
                 mapKeys.forEach(k => {
                     if (result[k] !== undefined && result[k] !== "") {
                         document.getElementById('f_' + k).value = result[k];
-                        // 触发localStorage保存
-                        localStorage.setItem(PREFIX + 'f_' + k, result[k]);
                     }
                 });
 
-                // 填入商品信息
                 if (result.items && Array.isArray(result.items)) {
-                    document.getElementById('items_container').innerHTML = ''; // 清空当前列表
+                    document.getElementById('items_container').innerHTML = ''; 
                     itemCounter = 0;
                     result.items.forEach(item => {
                         addEmptyItem(item);
