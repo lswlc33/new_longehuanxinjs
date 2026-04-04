@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>单据生成系统</title>
+    <style>
+        /* 全局样式 */
+        body { font-family: 'Microsoft YaHei', SimHei, sans-serif; margin: 0; padding: 0; background-color: #f0f2f5; display: flex; height: 100vh; overflow: hidden; }
+        * { box-sizing: border-box; }
+
+        /* 左侧控制台样式 */
+        .sidebar { width: 450px; background: #fff; padding: 20px; box-shadow: 2px 0 5px rgba(0,0,0,0.1); overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .sidebar h3 { margin: 0 0 10px 0; font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 5px; color: #333; display: flex; justify-content: space-between; align-items: center;}
+        
+        .form-group { display: flex; flex-direction: column; margin-bottom: 10px; }
+        .form-group label { font-size: 12px; color: #666; margin-bottom: 4px; }
+        .form-group input, .form-group textarea { padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; font-family: inherit; }
+        .form-row { display: flex; gap: 10px; }
+        .form-row .form-group { flex: 1; }
+        
+        button { background-color: #1677ff; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background 0.3s; }
+        button:hover { background-color: #4096ff; }
+        button.btn-success { background-color: #52c41a; }
+        button.btn-success:hover { background-color: #73d13d; }
+        button.btn-danger { background-color: #ff4d4f; padding: 4px 8px; font-size: 12px;}
+        button.btn-danger:hover { background-color: #ff7875; }
+        button.btn-icon { background: none; border: none; padding: 0; color: #666; cursor: pointer; font-size: 16px; margin-left: 5px;}
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+
+        /* 动态商品列表区 */
+        #items_container { background: #fafafa; padding: 10px; border-radius: 6px; border: 1px solid #eee; margin-bottom: 10px; }
+        .item-box { background: #fff; padding: 10px; border: 1px dashed #ccc; border-radius: 4px; margin-bottom: 10px; position: relative; }
+        .item-box-header { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px; font-weight: bold; color: #555; }
+        
+        /* 大模型配置区隐藏 */
+        #config_panel { display: none; background: #f9f9f9; padding: 10px; border-radius: 6px; border: 1px solid #ddd; }
+
+        /* 右侧预览区样式 */
+        .preview-container { flex: 1; padding: 40px; overflow-y: auto; display: flex; justify-content: center; align-items: flex-start; }
+        
+        /* === 打印单据核心样式 === */
+        .receipt-paper { width: 210mm; background: #fff; padding: 20px 40px; box-shadow: 0 0 10px rgba(0,0,0,0.1); color: #000; }
+        
+        /* 头部 */
+        .r-header { display: flex; align-items: center; justify-content: center; position: relative; margin-bottom: 20px; }
+        .r-logo { position: absolute; left: 0; top: 0; display: flex; align-items: center; color: #f28b00; font-weight: bold; font-size: 20px;}
+        .r-logo-icon { background: #f28b00; color: #fff; width: 24px; height: 24px; border-radius: 4px; display: inline-flex; justify-content: center; align-items: center; margin-right: 5px; font-size: 16px;}
+        .r-title { font-size: 22px; font-weight: bold; letter-spacing: 1px; }
+
+        /* Meta信息 */
+        .r-meta-row { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; }
+        
+        /* 主体表格区 */
+        .r-body { border: 2px solid #000; margin-bottom: 10px; }
+        .r-table { width: 100%; border-collapse: collapse; text-align: center; font-size: 15px; }
+        .r-table th, .r-table td { border-bottom: 1px dashed #000; border-right: 1px dashed #000; padding: 10px 5px; }
+        .r-table th:last-child, .r-table td:last-child { border-right: none; }
+        .r-table th { font-weight: normal; }
+        
+        /* 合并区域行 */
+        .r-summary-row { padding: 15px 10px; border-bottom: 1px dashed #000; display: flex; gap: 40px; font-size: 15px; }
+        .r-amount-row { padding: 15px 10px; border-bottom: 1px dashed #000; display: flex; gap: 60px; font-size: 15px; }
+        .r-notes-row { padding: 15px 10px; font-size: 15px; min-height: 60px; }
+
+        /* 打印媒体查询 */
+        @media print {
+            body { background: #fff; display: block; height: auto; overflow: visible; }
+            .sidebar { display: none; }
+            .preview-container { padding: 0; display: block; box-shadow: none; }
+            .receipt-paper { width: 100%; padding: 0; box-shadow: none; }
+            @page { size: A4 portrait; margin: 15mm; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 左侧控制台 -->
+    <div class="sidebar">
+        <div>
+            <h3>
+                <span>🤖 智能识别提取</span>
+                <button class="btn-icon" title="配置大模型" onclick="toggleConfig()">⚙️配置</button>
+            </h3>
+            
+            <!-- 大模型配置面板 (默认隐藏) -->
+            <div id="config_panel">
+                <div class="form-group">
+                    <label>接口地址 (BaseURL)</label>
+                    <input type="text" id="cfg_baseurl" placeholder="例如: https://api.openai.com/v1">
+                </div>
+                <div class="form-group">
+                    <label>API Key</label>
+                    <input type="password" id="cfg_key" placeholder="Bearer Token">
+                </div>
+                <div class="form-group">
+                    <label>模型名称 (Model)</label>
+                    <input type="text" id="cfg_model" placeholder="例如: doubao-seed-2-0-mini-260215">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>输入自然语言描述(订单信息) - 支持多个商品</label>
+                <textarea id="ai_input" rows="4" placeholder="例如：今天蒋晓良买了1台COLMO采暖炉（空调，单价3元），还有2根铜管（配件，单价100元）。地址是东青嘉园13乙1506，电话13584594778，优惠了50元。"></textarea>
+            </div>
+            <button id="btn_analyze" onclick="analyzeText()">🧠 AI 智能识别并填入表单</button>
+        </div>
+
+        <div>
+            <h3>📝 订单基础数据</h3>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>票据编号 <button class="btn-icon" onclick="generateReceiptNo()">🔄生成</button></label>
+                    <input type="text" id="f_receiptNo" oninput="updatePreview()">
+                </div>
+                <div class="form-group"><label>购货日期</label><input type="text" id="f_date" oninput="updatePreview()"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>顾客姓名</label><input type="text" id="f_customer" oninput="updatePreview()"></div>
+                <div class="form-group"><label>联系电话</label><input type="text" id="f_phone" oninput="updatePreview()"></div>
+            </div>
+            <div class="form-group"><label>送货地址</label><input type="text" id="f_address" oninput="updatePreview()"></div>
+            
+            <div class="form-row">
+                <div class="form-group"><label>整单优惠(元)</label><input type="number" id="f_discount" value="0" oninput="updatePreview()"></div>
+            </div>
+            <div class="form-group"><label>备注</label><input type="text" id="f_remarks" oninput="updatePreview()"></div>
+        </div>
+
+        <div>
+            <h3>📦 商品清单</h3>
+            <div id="items_container">
+                <!-- 动态商品项将渲染在这里 -->
+            </div>
+            <button onclick="addEmptyItem()" style="width: 100%; background: #fff; color: #1677ff; border: 1px dashed #1677ff;">+ 添加商品</button>
+        </div>
+
+        <button class="btn-success" onclick="window.print()">🖨️ 打印单据</button>
+    </div>
+
+    <!-- 右侧打印预览区 -->
+    <div class="preview-container">
+        <div class="receipt-paper">
+            <div class="r-header">
+                <div class="r-logo">
+                    <span class="r-logo-icon">H</span>汇通达<br><span style="font-size:10px;font-weight:normal;color:#666;">HUITONGDA</span>
+                </div>
+                <div class="r-title">常州市能晟冷暖设备工程有限公司销售专用票据</div>
+            </div>
+
+            <div class="r-meta-row">
+                <div>票据编号：<span id="p_receiptNo"></span></div>
+                <div>顾客：<span id="p_customer"></span></div>
+                <div>联系电话：<span id="p_phone"></span></div>
+            </div>
+            <div class="r-meta-row" style="margin-bottom: 15px;">
+                <div>送货地址：<span id="p_address"></span></div>
+                <div>购货日期：<span id="p_date"></span></div>
+            </div>
+
+            <div class="r-body">
+                <table class="r-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 45%;">商品名称</th>
+                            <th style="width: 15%;">类别</th>
+                            <th style="width: 10%;">数量</th>
+                            <th style="width: 15%;">单价(元)</th>
+                            <th style="width: 15%;">金额(元)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="p_items_tbody">
+                        <!-- 商品列表通过JS动态生成 -->
+                    </tbody>
+                </table>
+                <div class="r-summary-row">
+                    <div>总计： <span id="p_total">0.00</span>元</div>
+                    <div>优惠金额： <span id="p_discount">0.00</span></div>
+                    <div>成交总价： <span id="p_finalPrice">0.00</span></div>
+                </div>
+                <div class="r-amount-row">
+                    <div>实收金额大写（人民币）：<span id="p_amountUpper">零元整</span></div>
+                    <div>实收金额小写（人民币）：<span id="p_amountLower">0</span></div>
+                </div>
+                <div class="r-notes-row">
+                    备注：<span id="p_remarks"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const PREFIX = 'bossqcossales_';
+        let itemCounter = 0;
+
+        // 初始化加载
+        window.onload = function() {
+            // 配置大模型默认值（火山引擎豆包）
+            loadFromStorage('cfg_baseurl', 'https://ark.cn-beijing.volces.com/api/v3/chat/completions');
+            loadFromStorage('cfg_key', '');
+            loadFromStorage('cfg_model', 'doubao-seed-2-0-mini-260215');
+            
+            // 绑定配置输入框变化保存 localStorage
+            ['cfg_baseurl', 'cfg_key', 'cfg_model'].forEach(id => {
+                document.getElementById(id).addEventListener('change', (e) => {
+                    localStorage.setItem(PREFIX + e.target.id, e.target.value);
+                });
+            });
+
+            // 恢复基础表单（如果有的话）
+            ['f_customer', 'f_phone', 'f_address', 'f_remarks', 'f_discount'].forEach(id => {
+                const saved = localStorage.getItem(PREFIX + id);
+                if(saved) document.getElementById(id).value = saved;
+                document.getElementById(id).addEventListener('change', (e) => {
+                    localStorage.setItem(PREFIX + e.target.id, e.target.value);
+                });
+            });
+
+            // 初始化购货日期
+            if(!document.getElementById('f_date').value){
+                const now = new Date();
+                document.getElementById('f_date').value = `${now.getFullYear()}年${String(now.getMonth()+1).padStart(2,'0')}月${String(now.getDate()).padStart(2,'0')}日`;
+            }
+            
+            // 初始化单号
+            generateReceiptNo();
+
+            // 初始默认添加一个空白商品行
+            addEmptyItem();
+        };
+
+        function loadFromStorage(id, defaultValue) {
+            const el = document.getElementById(id);
+            const saved = localStorage.getItem(PREFIX + id);
+            if (saved !== null && saved !== "") {
+                el.value = saved;
+            } else if (defaultValue) {
+                el.value = defaultValue;
+                localStorage.setItem(PREFIX + id, defaultValue);
+            }
+        }
+
+        // 显示/隐藏配置面板
+        function toggleConfig() {
+            const panel = document.getElementById('config_panel');
+            panel.style.display = panel.style.display === 'none' || panel.style.display === '' ? 'block' : 'none';
+        }
+
+        // 自动生成随机单号
+        function generateReceiptNo() {
+            const now = new Date();
+            const dateStr = now.getFullYear().toString() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
+            const rand1 = Math.floor(Math.random() * 90000) + 10000; // 5位数
+            const rand2 = Math.floor(Math.random() * 900000) + 100000; // 6位数
+            document.getElementById('f_receiptNo').value = `HTD-${rand1}-${dateStr}${rand2}`;
+            updatePreview();
+        }
+
+        // 动态添加一个商品表单
+        function addEmptyItem(data = { productName: '', category: '', quantity: 1, unitPrice: 0 }) {
+            const container = document.getElementById('items_container');
+            const id = 'item_' + (++itemCounter);
+            
+            const html = `
+                <div class="item-box" id="${id}">
+                    <div class="item-box-header">
+                        商品明细 <button class="btn-danger" onclick="removeItem('${id}')">删除</button>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2"><label>商品名称</label><input type="text" class="i-name" value="${data.productName}" oninput="updatePreview()"></div>
+                        <div class="form-group" style="flex:1"><label>类别</label><input type="text" class="i-category" value="${data.category}" oninput="updatePreview()"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label>数量</label><input type="number" class="i-qty" value="${data.quantity}" oninput="updatePreview()"></div>
+                        <div class="form-group"><label>单价</label><input type="number" class="i-price" value="${data.unitPrice}" oninput="updatePreview()"></div>
+                    </div>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', html);
+            updatePreview();
+        }
+
+        function removeItem(id) {
+            document.getElementById(id).remove();
+            updatePreview();
+        }
+
+        // 数字转中文大写
+        function numberToChinese(money) {
+            var cnNums = new Array("零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖");
+            var cnIntRadice = new Array("", "拾", "佰", "仟");
+            var cnIntUnits = new Array("", "万", "亿", "兆");
+            var cnDecUnits = new Array("角", "分", "毫", "厘");
+            var cnInteger = "整";
+            var cnIntLast = "元";
+            var maxNum = 999999999999999.9999;
+            var IntegerNum; var DecimalNum; var ChineseStr = ""; var parts;
+            if (money == "") { return ""; }
+            money = parseFloat(money);
+            if (money >= maxNum) { return ""; }
+            if (money == 0) { ChineseStr = cnNums[0] + cnIntLast + cnInteger; return ChineseStr; }
+            money = money.toString();
+            if (money.indexOf(".") == -1) { IntegerNum = money; DecimalNum = ''; } 
+            else { parts = money.split("."); IntegerNum = parts[0]; DecimalNum = parts[1].substr(0, 4); }
+            if (parseInt(IntegerNum, 10) > 0) {
+                var zeroCount = 0; var IntLen = IntegerNum.length;
+                for (var i = 0; i < IntLen; i++) {
+                    var n = IntegerNum.substr(i, 1); var p = IntLen - i - 1; var q = p / 4; var m = p % 4;
+                    if (n == "0") { zeroCount++; } 
+                    else {
+                        if (zeroCount > 0) { ChineseStr += cnNums[0]; }
+                        zeroCount = 0; ChineseStr += cnNums[parseInt(n)] + cnIntRadice[m];
+                    }
+                    if (m == 0 && zeroCount < 4) { ChineseStr += cnIntUnits[q]; }
+                }
+                ChineseStr += cnIntLast;
+            }
+            if (DecimalNum != '') {
+                var decLen = DecimalNum.length;
+                for (var i = 0; i < decLen; i++) {
+                    var n = DecimalNum.substr(i, 1);
+                    if (n != '0') { ChineseStr += cnNums[Number(n)] + cnDecUnits[i]; }
+                }
+            }
+            if (ChineseStr == '') { ChineseStr += cnNums[0] + cnIntLast + cnInteger; } 
+            else if (DecimalNum == '') { ChineseStr += cnInteger; }
+            return ChineseStr;
+        }
+
+        // 更新预览区
+        function updatePreview() {
+            // 基础信息
+            const fields = ['receiptNo', 'date', 'customer', 'phone', 'address', 'remarks'];
+            fields.forEach(f => {
+                document.getElementById('p_' + f).innerText = document.getElementById('f_' + f).value;
+            });
+
+            // 获取所有商品列表计算
+            const itemBoxes = document.querySelectorAll('.item-box');
+            const tbody = document.getElementById('p_items_tbody');
+            tbody.innerHTML = ''; // 清空表格
+            
+            let totalAmount = 0;
+
+            itemBoxes.forEach(box => {
+                const name = box.querySelector('.i-name').value;
+                const cat = box.querySelector('.i-category').value;
+                const qty = parseFloat(box.querySelector('.i-qty').value) || 0;
+                const price = parseFloat(box.querySelector('.i-price').value) || 0;
+                const amount = qty * price;
+                totalAmount += amount;
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="text-align: left; padding-left:10px;">${name}</td>
+                    <td>${cat}</td>
+                    <td>${qty}</td>
+                    <td>${price}</td>
+                    <td>${amount}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            // 补齐至少一行空行，保持样式好看
+            if (itemBoxes.length === 0) {
+                tbody.innerHTML = `<tr><td style="text-align: left; padding-left:10px;">&nbsp;</td><td></td><td></td><td></td><td></td></tr>`;
+            }
+
+            // 计算总金额
+            const discount = parseFloat(document.getElementById('f_discount').value) || 0;
+            const finalPrice = totalAmount - discount;
+
+            document.getElementById('p_total').innerText = totalAmount.toFixed(2);
+            document.getElementById('p_discount').innerText = discount.toFixed(2);
+            document.getElementById('p_finalPrice').innerText = finalPrice.toFixed(2);
+
+            document.getElementById('p_amountLower').innerText = finalPrice;
+            document.getElementById('p_amountUpper').innerText = numberToChinese(finalPrice);
+        }
+
+        // 大模型识别功能
+        async function analyzeText() {
+            const btn = document.getElementById('btn_analyze');
+            const text = document.getElementById('ai_input').value.trim();
+            const url = document.getElementById('cfg_baseurl').value.trim();
+            const key = document.getElementById('cfg_key').value.trim();
+            const model = document.getElementById('cfg_model').value.trim();
+
+            if (!text) return alert("请输入需要识别的文本！");
+            if (!url || !key) {
+                toggleConfig(); // 展开配置面板提醒
+                return alert("请先配置大模型的 BaseURL 和 API Key！");
+            }
+
+            btn.disabled = true;
+            btn.innerText = "⏳ AI 分析处理中...";
+
+            const prompt = `
+你是一个订单信息提取助手。请从以下文本中提取订单信息，并严格以JSON格式输出。
+如果没有提到的字段，请输出空字符串 ""。数字类型的请输出纯数字。如果有多个商品请提取为数组。
+需要返回的JSON结构如下：
+{
+  "customer": "顾客姓名",
+  "phone": "联系电话",
+  "address": "送货地址",
+  "discount": "整单优惠金额(纯数字)",
+  "remarks": "备注信息",
+  "items": [
+    {
+      "productName": "商品名称",
+      "category": "类别(如 空调、配件等)",
+      "quantity": 数量(纯数字),
+      "unitPrice": 单价(纯数字)
+    }
+  ]
+}
+
+待提取订单文本：
+"${text}"
+
+请直接输出包含上述键名的JSON对象，不要加多余文字或markdown代码块标记。`;
+
+            try {
+                let apiUrl = url;
+                if (!apiUrl.endsWith('/chat/completions')) {
+                    apiUrl = apiUrl.replace(/\/$/, '') + '/chat/completions';
+                }
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${key}`
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: [{ role: "user", content: prompt }],
+                        temperature: 0.1
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP Error: ${response.status}`);
+                }
+
+                const data = await response.json();
+                let aiContent = data.choices[0].message.content.trim();
+                
+                // 剔除 markdown 标记
+                aiContent = aiContent.replace(/^```json/i, '').replace(/^```/, '').replace(/```$/, '').trim();
+
+                const result = JSON.parse(aiContent);
+
+                // 填入基础信息
+                const mapKeys = ['customer', 'phone', 'address', 'discount', 'remarks'];
+                mapKeys.forEach(k => {
+                    if (result[k] !== undefined && result[k] !== "") {
+                        document.getElementById('f_' + k).value = result[k];
+                        // 触发localStorage保存
+                        localStorage.setItem(PREFIX + 'f_' + k, result[k]);
+                    }
+                });
+
+                // 填入商品信息
+                if (result.items && Array.isArray(result.items)) {
+                    document.getElementById('items_container').innerHTML = ''; // 清空当前列表
+                    itemCounter = 0;
+                    result.items.forEach(item => {
+                        addEmptyItem(item);
+                    });
+                }
+
+                updatePreview();
+                alert("✅ AI 识别成功并已填入表单！");
+
+            } catch (error) {
+                console.error(error);
+                alert("❌ 识别失败，请检查模型配置是否正确或F12控制台报错信息。\n错误信息: " + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "🧠 AI 智能识别并填入表单";
+            }
+        }
+    </script>
+</body>
+</html>
