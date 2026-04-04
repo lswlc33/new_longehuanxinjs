@@ -197,7 +197,7 @@
 
             <div class="form-group">
                 <label>输入自然语言描述(订单信息) - 支持多个商品</label>
-                <textarea id="ai_input" rows="4" placeholder="例如：今天蒋晓良买了1台COLMO采暖炉（空调，单价3000元），还有2根铜管（配件，单价100元）。地址是东青嘉园13乙1506，电话13584594778。"></textarea>
+                <textarea id="ai_input" rows="4" placeholder="例如：今天小红买了1台COLMO采暖炉（空调，单价3000元），还有2根铜管。地址是东青嘉园1乙15，电话135XXXX4778。"></textarea>
             </div>
             <button id="btn_analyze" onclick="analyzeText()">🧠 AI 智能识别并填入表单</button>
         </div>
@@ -555,7 +555,6 @@
                 }
 
                 updatePreview();
-                alert("✅ AI 识别成功并已填入表单！");
 
             } catch (error) {
                 console.error(error);
