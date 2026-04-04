@@ -1,4 +1,4 @@
-(function() {
+(function () {
     'use strict';
 
     const CONSTANTS = {
@@ -1187,8 +1187,8 @@
         els.configDialog.open = true;
     }
 
-    function closeConfigDialog() { 
-        els.configDialog.open = false; 
+    function closeConfigDialog() {
+        els.configDialog.open = false;
     }
 
     function saveConfig() {
@@ -1304,8 +1304,8 @@
                     });
                 });
             });
-        } catch (e) { 
-            console.error("地址解析错误", e); 
+        } catch (e) {
+            console.error("地址解析错误", e);
         }
     }
 
@@ -1557,9 +1557,9 @@
         state.orderToCancel = "";
     }
 
-    function closeConfirmDialog() { 
-        els.confirmDialog.open = false; 
-        state.orderToCancel = ""; 
+    function closeConfirmDialog() {
+        els.confirmDialog.open = false;
+        state.orderToCancel = "";
     }
 
     async function refundOrder() {
@@ -1586,9 +1586,9 @@
         state.orderToRefund = "";
     }
 
-    function closeRefundDialog() { 
-        els.refundDialog.open = false; 
-        state.orderToRefund = ""; 
+    function closeRefundDialog() {
+        els.refundDialog.open = false;
+        state.orderToRefund = "";
     }
 
     function openDetailPushDialog() {
@@ -1806,8 +1806,8 @@
             try {
                 mdui.snackbar({ message: "正在获取最新单号..." });
                 shopOrderNum = await generateNextOrderNumber();
-            } catch (e) { 
-                return showError("自动获取单号失败"); 
+            } catch (e) {
+                return showError("自动获取单号失败");
             }
         }
 
@@ -2203,7 +2203,7 @@
                 const index = parseInt(validateBtn.dataset.index, 10);
                 validatePayloadEntry(index);
             }
-            
+
             const removeBtn = e.target.closest('.remove-payload-btn');
             if (removeBtn && !removeBtn.disabled) {
                 const index = parseInt(removeBtn.dataset.index, 10);
@@ -2277,12 +2277,12 @@
         document.getElementById('lsItemList').addEventListener('click', (e) => {
             const saveBtn = e.target.closest('mdui-button');
             const delBtn = e.target.closest('mdui-button');
-            
+
             if (saveBtn && saveBtn.innerText === '保存') {
                 const container = saveBtn.closest('div[style*="flex-direction: column"]');
                 const keyLabel = container?.querySelector('div[style*="font-weight: bold"]');
                 const input = container?.querySelector('mdui-text-field');
-                
+
                 if (keyLabel && input) {
                     const key = keyLabel.innerText.replace('Key: ', '');
                     try {
@@ -2294,11 +2294,11 @@
                     }
                 }
             }
-            
+
             if (delBtn && delBtn.innerText === '删除') {
                 const container = delBtn.closest('div[style*="flex-direction: column"]');
                 const keyLabel = container?.querySelector('div[style*="font-weight: bold"]');
-                
+
                 if (keyLabel) {
                     const key = keyLabel.innerText.replace('Key: ', '');
                     if (confirm(`确定删除数据项 [${key}] 吗？`)) {

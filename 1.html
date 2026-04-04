@@ -746,8 +746,9 @@
             btn.innerText = "⏳ AI 分析处理中...";
 
             const prompt = `
-你是一个订单信息提取助手。请从以下文本中提取订单信息，并严格以JSON格式输出。
+你是一个订单信息提取助手。请从以下文本中提取订单信息，并以JSON格式输出。默认不要深度思考，直接提取。
 如果没有提到的字段，请输出空字符串 ""。数字类型的请输出纯数字。如果有多个商品请提取为数组。
+商品数量如果未提及，默认为1。
 需要返回的JSON结构如下：
 {
   "customer": "顾客姓名",
@@ -784,7 +785,11 @@
                     body: JSON.stringify({
                         model: model,
                         messages: [{ role: "user", content: prompt }],
-                        temperature: 0.1
+                        temperature: 0.1,
+                        stream: false,
+                        thinking: {
+                            type: "disabled"
+                        }
                     })
                 });
 
