@@ -1,664 +1,476 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>虚拟票据</title>
-
-    <!-- 引入 MiSans 字体 -->
-    <link rel="stylesheet" crossorigin="anonymous"
-        href="https://cdn.jsdelivr.net/npm/misans@4.1.0/lib/Normal/MiSans-Medium.min.css" />
-    <link rel="stylesheet" crossorigin="anonymous"
-        href="https://cdn.jsdelivr.net/npm/misans@4.1.0/lib/Normal/MiSans-Bold.min.css" />
-
-    <!-- 引入 Element Plus CSS -->
-    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
-
+    <title>单据生成系统</title>
     <style>
-        /* 全局应用 MiSans 字体 */
-        body {
-            font-family: 'MiSans', 'Microsoft YaHei', sans-serif;
-            margin: 0;
-            padding: 0;
-            background-color: #f0f2f5;
-        }
+        /* 全局样式 */
+        body { font-family: 'Microsoft YaHei', SimHei, sans-serif; margin: 0; padding: 0; background-color: #f0f2f5; }
+        * { box-sizing: border-box; }
 
-        /* 覆盖 Element Plus 默认字体 */
-        * {
-            font-family: inherit;
-        }
-
-        /* 隐藏 Vue 尚未编译时的插值表达式 */
-        [v-cloak] {
-            display: none;
-        }
-
-        /* 自定义抽屉内样式优化 */
-        .el-drawer__body {
-            padding: 0 20px 20px 20px;
-            overflow-y: auto;
-        }
-
-        .section-title {
-            font-size: 16px;
-            font-family: 'MiSans', sans-serif;
-            font-weight: bold;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #ebeef5;
-            padding-bottom: 10px;
-            margin: 20px 0 15px 0;
-            color: #303133;
-        }
-
-        .section-title:first-child {
-            margin-top: 0;
-        }
-
-        .config-card {
-            background-color: #f8f9fa;
-            padding: 15px;
-            border-radius: 8px;
-            margin-bottom: 15px;
-            border: 1px solid #ebeef5;
-        }
-
-        .item-card {
-            background: #fff;
-            border: 1px dashed #dcdfe6;
-            border-radius: 6px;
-            padding: 15px;
-            margin-bottom: 10px;
-            position: relative;
-        }
-
-        .item-card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-            font-size: 13px;
-            color: #909399;
-        }
-
-        /* 悬浮按钮 */
-        .floating-btn {
+        /* 悬浮切换按钮 */
+        .toggle-btn {
             position: fixed;
             left: 20px;
             top: 20px;
-            z-index: 1000;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 1002; /* 层级最高，悬浮在控制台之上 */
+            background-color: #1677ff;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            transition: background 0.3s;
         }
+        .toggle-btn:hover { background-color: #4096ff; }
+
+        /* 左侧悬浮控制台（抽屉弹窗样式） */
+        .sidebar { 
+            position: fixed;
+            left: 0;
+            top: 0;
+            height: 100vh;
+            width: 450px; 
+            background: #fff; 
+            padding: 20px; 
+            padding-top: 65px; /* 避开悬浮按钮 */
+            box-shadow: 4px 0 15px rgba(0,0,0,0.15); 
+            overflow-y: auto; 
+            display: flex; 
+            flex-direction: column; 
+            gap: 15px;
+            z-index: 1001;
+            /* 侧滑动画 */
+            transform: translateX(-100%);
+            transition: transform 0.3s ease;
+        }
+        .sidebar.open { 
+            transform: translateX(0); /* 展开时滑入 */
+        }
+        
+        .sidebar h3 { margin: 0 0 10px 0; font-size: 16px; border-bottom: 1px solid #eee; padding-bottom: 5px; color: #333; display: flex; justify-content: space-between; align-items: center;}
+        
+        .form-group { display: flex; flex-direction: column; margin-bottom: 10px; }
+        .form-group label { font-size: 12px; color: #666; margin-bottom: 4px; }
+        .form-group input, .form-group textarea { padding: 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; font-family: inherit; }
+        .form-row { display: flex; gap: 10px; }
+        .form-row .form-group { flex: 1; }
+        
+        button { background-color: #1677ff; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background 0.3s; }
+        button:hover { background-color: #4096ff; }
+        button.btn-danger { background-color: #ff4d4f; padding: 4px 8px; font-size: 12px;}
+        button.btn-danger:hover { background-color: #ff7875; }
+        button.btn-icon { background: none; border: none; padding: 0; color: #666; cursor: pointer; font-size: 16px; margin-left: 5px;}
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+
+        /* 动态商品列表区 */
+        #items_container { background: #fafafa; padding: 10px; border-radius: 6px; border: 1px solid #eee; margin-bottom: 10px; }
+        .item-box { background: #fff; padding: 10px; border: 1px dashed #ccc; border-radius: 4px; margin-bottom: 10px; position: relative; }
+        .item-box-header { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 12px; font-weight: bold; color: #555; }
+        
+        /* 大模型配置区隐藏 */
+        #config_panel { display: none; background: #f9f9f9; padding: 10px; border-radius: 6px; border: 1px solid #ddd; }
 
         /* === 预览区外部容器 === */
-        .preview-container {
-            width: 100%;
-            padding: 60px 40px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            min-height: 100vh;
+        .preview-container { 
+            width: 100%; 
+            padding: 40px; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; /* 居中显示 */
         }
-
+        
         /* === 打印单据核心样式 === */
-        .receipt-paper {
-            width: 210mm;
-            background: #fff;
-            padding: 20px 40px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
-            color: #000;
-        }
-
+        .receipt-paper { width: 210mm; background: #fff; padding: 20px 40px; box-shadow: 0 0 10px rgba(0,0,0,0.1); color: #000; }
+        
         /* 头部：利用Flex划分三等分，绝对防重合且保证居中 */
-        .r-header {
-            display: flex;
-            align-items: flex-start;
-            margin-bottom: 25px;
-        }
+        .r-header { display: flex; align-items: flex-start; margin-bottom: 20px; }
+        
+        .r-logo-wrap { width: 25%; display: flex; align-items: center; flex-direction: row; color: #f28b00; font-weight: bold; font-size: 20px; line-height: 1.2; }
+        .r-logo-icon { background: #f28b00; color: #fff; width: 24px; height: 24px; border-radius: 4px; display: inline-flex; justify-content: center; align-items: center; margin-right: 5px; font-size: 16px;}
+        .r-logo-text { display: flex; flex-direction: column; }
 
-        .r-logo-wrap {
-            width: 25%;
-            display: flex;
-            align-items: center;
-            flex-direction: row;
-            color: #f28b00;
-            font-weight: bold;
-            font-size: 20px;
-            line-height: 1.2;
-        }
-
-        .r-logo-icon {
-            background: #f28b00;
-            color: #fff;
-            width: 24px;
-            height: 24px;
-            border-radius: 4px;
-            display: inline-flex;
-            justify-content: center;
-            align-items: center;
-            margin-right: 5px;
-            font-size: 16px;
-        }
-
-        .r-logo-text {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .r-title-wrap {
-            width: 50%;
-            text-align: center;
-        }
-
-        .r-title {
-            font-size: 24px;
-            font-weight: bold;
-            letter-spacing: 1px;
-            display: inline-block;
-            font-family: 'MiSans', sans-serif;
-        }
-
-        .r-header-placeholder {
-            width: 25%;
-        }
+        .r-title-wrap { width: 50%; text-align: center; }
+        .r-title { font-size: 22px; font-weight: bold; letter-spacing: 1px; display: inline-block; }
+        
+        .r-header-placeholder { width: 25%; } /* 右侧占位，用于将标题强制推在正中 */
 
         /* Meta信息 */
-        .r-meta-row {
-            display: flex;
-            justify-content: space-between;
-            font-size: 14px;
-            margin-bottom: 8px;
-        }
-
+        .r-meta-row { display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 8px; }
+        
         /* 主体表格区 */
-        .r-body {
-            border: 2px solid #000;
-            margin-bottom: 10px;
-        }
-
-        .r-table {
-            width: 100%;
-            border-collapse: collapse;
-            text-align: center;
-            font-size: 15px;
-        }
-
-        .r-table th,
-        .r-table td {
-            border-bottom: 1px dashed #000;
-            border-right: 1px dashed #000;
-            padding: 10px 5px;
-        }
-
-        .r-table th:last-child,
-        .r-table td:last-child {
-            border-right: none;
-        }
-
-        .r-table th {
-            font-weight: normal;
-        }
-
+        .r-body { border: 2px solid #000; margin-bottom: 10px; }
+        .r-table { width: 100%; border-collapse: collapse; text-align: center; font-size: 15px; }
+        .r-table th, .r-table td { border-bottom: 1px dashed #000; border-right: 1px dashed #000; padding: 10px 5px; }
+        .r-table th:last-child, .r-table td:last-child { border-right: none; }
+        .r-table th { font-weight: normal; }
+        
         /* 合并区域行 */
-        .r-summary-row {
-            padding: 15px 10px;
-            border-bottom: 1px dashed #000;
-            display: flex;
-            justify-content: flex-end;
-            font-size: 16px;
-            font-weight: bold;
-        }
+        .r-summary-row { padding: 15px 10px; border-bottom: 1px dashed #000; display: flex; justify-content: flex-end; font-size: 16px; font-weight: bold;}
+        .r-amount-row { padding: 15px 10px; border-bottom: 1px dashed #000; display: flex; gap: 60px; font-size: 15px; }
+        .r-notes-row { padding: 15px 10px; font-size: 15px; min-height: 60px; }
 
-        .r-amount-row {
-            padding: 15px 10px;
-            border-bottom: 1px dashed #000;
-            display: flex;
-            gap: 60px;
-            font-size: 15px;
-        }
-
-        .r-notes-row {
-            padding: 15px 10px;
-            font-size: 15px;
-            min-height: 60px;
-        }
-
-        /* 打印按钮区 */
-        .action-bar {
-            margin-top: 40px;
-        }
+        /* 底部打印按钮区 */
+        .action-bar { margin-top: 30px; text-align: center; }
+        .btn-print { background-color: #52c41a; font-size: 18px; padding: 12px 30px; border-radius: 8px; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .btn-print:hover { background-color: #73d13d; }
 
         /* === 打印媒体查询 === */
         @media print {
-            body {
-                background: #fff;
-                padding: 0;
-            }
-
-            .no-print {
-                display: none !important;
-            }
-
-            /* 隐藏所有UI组件和非打印元素 */
-            .preview-container {
-                padding: 0;
-                display: block;
-                min-height: auto;
-            }
-
-            .receipt-paper {
-                width: 100%;
-                padding: 0;
-                box-shadow: none;
-                margin: 0 auto;
-                border: none;
-            }
-
-            @page {
-                size: A4 portrait;
-                margin: 15mm;
-            }
+            body { background: #fff; padding: 0; }
+            .toggle-btn { display: none !important; } 
+            .sidebar { display: none !important; }
+            .action-bar { display: none !important; } /* 打印时隐藏打印按钮 */
+            .preview-container { padding: 0; display: block; }
+            .receipt-paper { width: 100%; padding: 0; box-shadow: none; margin: 0 auto; }
+            @page { size: A4 portrait; margin: 15mm; }
         }
     </style>
 </head>
-
 <body>
-    <div id="app" v-cloak>
-        <!-- 悬浮打开侧边栏按钮 -->
-        <el-button type="primary" size="large" class="floating-btn no-print" @click="drawerVisible = true">
-            <el-icon>
-                <Menu />
-            </el-icon>&nbsp;展开控制台
-        </el-button>
 
-        <!-- Element Plus 侧边抽屉 -->
-        <el-drawer v-model="drawerVisible" direction="ltr" size="480px" :with-header="false" class="no-print">
-            <div style="padding-top: 20px;">
-                <!-- 基础数据区块 -->
-                <div class="section-title">📝 订单基础数据</div>
-                <el-form :model="order" label-position="top" size="default">
-                    <el-form-item label="票据大标题">
-                        <el-input v-model="order.title" placeholder="例如：销售专用票据"></el-input>
-                    </el-form-item>
-                    <el-row :gutter="15">
-                        <el-col :span="12">
-                            <el-form-item label="票据编号">
-                                <el-input v-model="order.receiptNo">
-                                    <template #append>
-                                        <el-button @click="generateReceiptNo"><el-icon>
-                                                <Refresh />
-                                            </el-icon></el-button>
-                                    </template>
-                                </el-input>
-                            </el-form-item>
-                        </el-col>
-                        <el-col :span="12">
-                            <el-form-item label="购货日期">
-                                <el-input v-model="order.date"></el-input>
-                            </el-form-item>
-                        </el-col>
-                    </el-row>
-                    <el-row :gutter="15">
-                        <el-col :span="12">
-                            <el-form-item label="顾客姓名">
-                                <el-input v-model="order.customer"></el-input>
-                            </el-form-item>
-                        </el-col>
-                        <el-col :span="12">
-                            <el-form-item label="联系电话">
-                                <el-input v-model="order.phone"></el-input>
-                            </el-form-item>
-                        </el-col>
-                    </el-row>
-                    <el-form-item label="送货地址">
-                        <el-input v-model="order.address"></el-input>
-                    </el-form-item>
-                    <el-form-item label="备注">
-                        <el-input v-model="order.remarks" placeholder="如有特殊说明请填写"></el-input>
-                    </el-form-item>
-                </el-form>
+    <!-- 悬浮控制按钮 -->
+    <button class="toggle-btn" id="toggleBtn" onclick="toggleSidebar()">☰ 展开控制台</button>
 
-                <!-- AI 识别区块 -->
-                <div class="section-title">
-                    <span>🤖 智能识别提取</span>
-                    <el-button type="primary" link @click="showConfig = !showConfig">
-                        <el-icon>
-                            <Setting />
-                        </el-icon>&nbsp;配置
-                    </el-button>
-                </div>
-
-                <el-collapse-transition>
-                    <div v-show="showConfig" class="config-card">
-                        <el-form label-position="top" size="small">
-                            <el-form-item label="接口地址 (BaseURL)">
-                                <el-input v-model="config.baseUrl"></el-input>
-                            </el-form-item>
-                            <el-form-item label="API Key">
-                                <el-input v-model="config.apiKey" type="password" show-password></el-input>
-                            </el-form-item>
-                            <el-form-item label="模型名称 (Model)">
-                                <el-input v-model="config.model"></el-input>
-                            </el-form-item>
-                        </el-form>
-                    </div>
-                </el-collapse-transition>
-
-                <el-form label-position="top">
-                    <el-form-item label="输入自然语言描述(订单信息) - 支持多商品">
-                        <el-input v-model="aiInput" type="textarea" :rows="4"
-                            placeholder="例如：今天张三买了1台COLMO空调（单价3000），还有2个支架（配件，单价100）。地址是东青嘉园13乙，电话13588888888。">
-                        </el-input>
-                    </el-form-item>
-                    <el-button type="primary" style="width: 100%;" @click="analyzeText" :loading="isAnalyzing">
-                        🧠 AI 智能识别并填入表单
-                    </el-button>
-                </el-form>
-
-                <!-- 商品清单区块 -->
-                <div class="section-title" style="margin-top: 30px;">📦 商品清单</div>
-
-                <div v-for="(item, index) in items" :key="item.id" class="item-card">
-                    <div class="item-card-header">
-                        <span>明细 #{{ index + 1 }}</span>
-                        <el-button type="danger" link @click="removeItem(index)">删除</el-button>
-                    </div>
-                    <el-row :gutter="10">
-                        <el-col :span="16">
-                            <el-form-item label="商品名称" style="margin-bottom: 10px;">
-                                <el-input v-model="item.productName" size="small"></el-input>
-                            </el-form-item>
-                        </el-col>
-                        <el-col :span="8">
-                            <el-form-item label="类别" style="margin-bottom: 10px;">
-                                <el-input v-model="item.category" size="small"></el-input>
-                            </el-form-item>
-                        </el-col>
-                    </el-row>
-                    <el-row :gutter="10">
-                        <el-col :span="12">
-                            <el-form-item label="数量" style="margin-bottom: 0;">
-                                <el-input-number v-model="item.quantity" :min="1" size="small"
-                                    style="width: 100%;"></el-input-number>
-                            </el-form-item>
-                        </el-col>
-                        <el-col :span="12">
-                            <el-form-item label="单价" style="margin-bottom: 0;">
-                                <el-input-number v-model="item.unitPrice" :min="0" :precision="2" :step="10"
-                                    size="small" style="width: 100%;"></el-input-number>
-                            </el-form-item>
-                        </el-col>
-                    </el-row>
-                </div>
-
-                <el-button plain border dashed @click="addItem"
-                    style="width: 100%; margin-bottom: 40px; border-style: dashed;">
-                    <el-icon>
-                        <Plus />
-                    </el-icon> 添加商品
-                </el-button>
+    <!-- 左侧悬浮抽屉控制台 -->
+    <div class="sidebar" id="sidebar">
+        <div>
+            <h3>📝 订单基础数据</h3>
+            <div class="form-group">
+                <label>票据大标题</label>
+                <input type="text" id="f_title" oninput="updatePreview()" placeholder="例如：销售专用票据">
             </div>
-        </el-drawer>
 
-        <!-- 右侧预览打印区 -->
-        <div class="preview-container">
-            <div class="receipt-paper">
-                <!-- 头部布局 -->
-                <div class="r-header">
-                    <div class="r-logo-wrap">
-                        <span class="r-logo-icon">H</span>
-                        <span class="r-logo-text">
-                            <span>汇通达</span>
-                            <span style="font-size:10px;font-weight:normal;color:#666;">HUITONGDA</span>
-                        </span>
-                    </div>
-                    <div class="r-title-wrap">
-                        <span class="r-title">{{ order.title || '销售专用票据' }}</span>
-                    </div>
-                    <div class="r-header-placeholder"></div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>票据编号 <button class="btn-icon" onclick="generateReceiptNo()">🔄生成</button></label>
+                    <input type="text" id="f_receiptNo" oninput="updatePreview()">
                 </div>
+                <div class="form-group"><label>购货日期</label><input type="text" id="f_date" oninput="updatePreview()"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label>顾客姓名</label><input type="text" id="f_customer" oninput="updatePreview()"></div>
+                <div class="form-group"><label>联系电话</label><input type="text" id="f_phone" oninput="updatePreview()"></div>
+            </div>
+            <div class="form-group"><label>送货地址</label><input type="text" id="f_address" oninput="updatePreview()"></div>
+            <div class="form-group"><label>备注</label><input type="text" id="f_remarks" oninput="updatePreview()"></div>
+        </div>
 
-                <!-- 订单元数据 -->
-                <div class="r-meta-row">
-                    <div>票据编号：<span>{{ order.receiptNo }}</span></div>
-                    <div>顾客：<span>{{ order.customer }}</span></div>
-                    <div>联系电话：<span>{{ order.phone }}</span></div>
+        <div>
+            <h3>
+                <span>🤖 智能识别提取</span>
+                <button class="btn-icon" title="配置大模型" onclick="toggleConfig()">⚙️配置</button>
+            </h3>
+            
+            <div id="config_panel">
+                <div class="form-group">
+                    <label>接口地址 (BaseURL)</label>
+                    <input type="text" id="cfg_baseurl" placeholder="例如: https://api.openai.com/v1">
                 </div>
-                <div class="r-meta-row" style="margin-bottom: 15px;">
-                    <div>送货地址：<span>{{ order.address }}</span></div>
-                    <div>购货日期：<span>{{ order.date }}</span></div>
+                <div class="form-group">
+                    <label>API Key</label>
+                    <input type="password" id="cfg_key" placeholder="Bearer Token">
                 </div>
-
-                <!-- 表格区域 -->
-                <div class="r-body">
-                    <table class="r-table">
-                        <thead>
-                            <tr>
-                                <th style="width: 45%;">商品名称</th>
-                                <th style="width: 15%;">类别</th>
-                                <th style="width: 10%;">数量</th>
-                                <th style="width: 15%;">单价(元)</th>
-                                <th style="width: 15%;">金额(元)</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <!-- Vue 渲染商品 -->
-                            <tr v-for="item in items" :key="item.id">
-                                <td style="text-align: left; padding-left:10px;">{{ item.productName }}</td>
-                                <td>{{ item.category }}</td>
-                                <td>{{ item.quantity }}</td>
-                                <td>{{ parseFloat(item.unitPrice).toFixed(2) }}</td>
-                                <td>{{ (item.quantity * item.unitPrice).toFixed(2) }}</td>
-                            </tr>
-                            <!-- 无商品时补空行保持样式 -->
-                            <tr v-if="items.length === 0">
-                                <td style="text-align: left; padding-left:10px;">&nbsp;</td>
-                                <td></td>
-                                <td></td>
-                                <td></td>
-                                <td></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                    <div class="r-summary-row">
-                        <div>合计金额： <span>{{ totalAmount.toFixed(2) }}</span> 元</div>
-                    </div>
-                    <div class="r-amount-row">
-                        <div>实收金额大写（人民币）：<span>{{ totalAmountUpper }}</span></div>
-                        <div>实收金额小写（人民币）：<span>{{ totalAmount.toFixed(2) }}</span></div>
-                    </div>
-                    <div class="r-notes-row">
-                        备注：<span>{{ order.remarks }}</span>
-                    </div>
+                <div class="form-group">
+                    <label>模型名称 (Model)</label>
+                    <input type="text" id="cfg_model" placeholder="例如: doubao-seed-2-0-mini-260215">
                 </div>
             </div>
 
-            <!-- 打印按钮 -->
-            <div class="action-bar no-print">
-                <el-button type="success" size="large" @click="handlePrint">
-                    <el-icon>
-                        <Printer />
-                    </el-icon>&nbsp;🖨️ 开始打印单据
-                </el-button>
+            <div class="form-group">
+                <label>输入自然语言描述(订单信息) - 支持多个商品</label>
+                <textarea id="ai_input" rows="4" placeholder="例如：今天蒋晓良买了1台COLMO采暖炉（空调，单价3000元），还有2根铜管（配件，单价100元）。地址是东青嘉园13乙1506，电话13584594778。"></textarea>
             </div>
+            <button id="btn_analyze" onclick="analyzeText()">🧠 AI 智能识别并填入表单</button>
+        </div>
+
+        <div>
+            <h3>📦 商品清单</h3>
+            <div id="items_container">
+                <!-- 动态商品项将渲染在这里 -->
+            </div>
+            <button onclick="addEmptyItem()" style="width: 100%; background: #fff; color: #1677ff; border: 1px dashed #1677ff;">+ 添加商品</button>
         </div>
     </div>
 
-    <!-- 引入 Vue 3 -->
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <!-- 引入 Element Plus JS -->
-    <script src="https://unpkg.com/element-plus"></script>
-    <!-- 引入 Element Plus Icons -->
-    <script src="https://unpkg.com/@element-plus/icons-vue"></script>
+    <!-- 右侧打印预览区（居中独立） -->
+    <div class="preview-container">
+        <!-- 打印纸张实体 -->
+        <div class="receipt-paper">
+            
+            <!-- 分块布局的头部 -->
+            <div class="r-header">
+                <!-- 1. 左侧 Logo 区 -->
+                <div class="r-logo-wrap">
+                    <span class="r-logo-icon">H</span>
+                    <span class="r-logo-text">
+                        <span>汇通达</span>
+                        <span style="font-size:10px;font-weight:normal;color:#666;">HUITONGDA</span>
+                    </span>
+                </div>
+                <!-- 2. 中间 标题 区 -->
+                <div class="r-title-wrap">
+                    <span class="r-title" id="p_title">销售专用票据</span>
+                </div>
+                <!-- 3. 右侧 空白占位 区 -->
+                <div class="r-header-placeholder"></div>
+            </div>
+
+            <!-- 数据区块 -->
+            <div class="r-meta-row">
+                <div>票据编号：<span id="p_receiptNo"></span></div>
+                <div>顾客：<span id="p_customer"></span></div>
+                <div>联系电话：<span id="p_phone"></span></div>
+            </div>
+            <div class="r-meta-row" style="margin-bottom: 15px;">
+                <div>送货地址：<span id="p_address"></span></div>
+                <div>购货日期：<span id="p_date"></span></div>
+            </div>
+
+            <div class="r-body">
+                <table class="r-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 45%;">商品名称</th>
+                            <th style="width: 15%;">类别</th>
+                            <th style="width: 10%;">数量</th>
+                            <th style="width: 15%;">单价(元)</th>
+                            <th style="width: 15%;">金额(元)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="p_items_tbody">
+                        <!-- 商品列表 -->
+                    </tbody>
+                </table>
+                <div class="r-summary-row">
+                    <div>合计金额： <span id="p_total">0.00</span> 元</div>
+                </div>
+                <div class="r-amount-row">
+                    <div>实收金额大写（人民币）：<span id="p_amountUpper">零元整</span></div>
+                    <div>实收金额小写（人民币）：<span id="p_amountLower">0.00</span></div>
+                </div>
+                <div class="r-notes-row">
+                    备注：<span id="p_remarks"></span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 打印按钮移至单据下方独立区域 -->
+        <div class="action-bar">
+            <button class="btn-print" onclick="window.print()">🖨️ 打印单据</button>
+        </div>
+    </div>
 
     <script>
-        const { createApp, ref, reactive, computed, watch, onMounted } = Vue;
+        const PREFIX = 'bossqcossales_';
+        let itemCounter = 0;
 
-        const app = createApp({
-            setup() {
-                const PREFIX = 'bossqcos_v2_';
-
-                // UI 状态
-                const drawerVisible = ref(false);
-                const showConfig = ref(false);
-                const isAnalyzing = ref(false);
-                const aiInput = ref('');
-
-                // 大模型配置 (长期保存)
-                const config = reactive({
-                    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
-                    apiKey: '',
-                    model: 'doubao-seed-2-0-mini-260215'
+        // 初始化加载
+        window.onload = function() {
+            // 1. 恢复大模型配置 (长期保存)
+            loadFromStorage('cfg_baseurl', 'https://ark.cn-beijing.volces.com/api/v3/chat/completions');
+            loadFromStorage('cfg_key', '');
+            loadFromStorage('cfg_model', 'doubao-seed-2-0-mini-260215');
+            
+            ['cfg_baseurl', 'cfg_key', 'cfg_model'].forEach(id => {
+                document.getElementById(id).addEventListener('change', (e) => {
+                    localStorage.setItem(PREFIX + e.target.id, e.target.value);
                 });
+            });
 
-                // 订单基础信息 (除Title外，不保存)
-                const order = reactive({
-                    title: '销售专用票据',
-                    receiptNo: '',
-                    date: '',
-                    customer: '',
-                    phone: '',
-                    address: '',
-                    remarks: ''
-                });
+            // 2. 恢复票据大标题
+            const titleEl = document.getElementById('f_title');
+            const savedTitle = localStorage.getItem(PREFIX + 'f_title');
+            titleEl.value = savedTitle ? savedTitle : '销售专用票据';
+            titleEl.addEventListener('change', (e) => {
+                localStorage.setItem(PREFIX + 'f_title', e.target.value);
+            });
 
-                // 商品列表 (不保存)
-                const items = ref([]);
+            // 初始化购货日期为今天
+            const now = new Date();
+            document.getElementById('f_date').value = `${now.getFullYear()}年${String(now.getMonth()+1).padStart(2,'0')}月${String(now.getDate()).padStart(2,'0')}日`;
+            
+            // 初始化单号
+            generateReceiptNo();
 
-                // 初始化逻辑
-                onMounted(() => {
-                    // 读取配置
-                    const savedConfig = localStorage.getItem(PREFIX + 'config');
-                    if (savedConfig) {
-                        Object.assign(config, JSON.parse(savedConfig));
-                    }
-                    // 读取标题
-                    const savedTitle = localStorage.getItem(PREFIX + 'title');
-                    if (savedTitle) {
-                        order.title = savedTitle;
-                    }
+            // 初始默认添加一个空白商品行
+            addEmptyItem();
+        };
 
-                    // 默认日期
-                    const now = new Date();
-                    order.date = `${now.getFullYear()}年${String(now.getMonth() + 1).padStart(2, '0')}月${String(now.getDate()).padStart(2, '0')}日`;
+        // 切换侧边栏展开/收起 (控制 transform 滑动)
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const btn = document.getElementById('toggleBtn');
+            if (sidebar.classList.contains('open')) {
+                sidebar.classList.remove('open');
+                btn.innerText = '☰ 展开控制台';
+            } else {
+                sidebar.classList.add('open');
+                btn.innerText = '✕ 收起控制台';
+            }
+        }
 
-                    generateReceiptNo();
-                    addItem(); // 默认加一个空商品
-                });
+        function loadFromStorage(id, defaultValue) {
+            const el = document.getElementById(id);
+            const saved = localStorage.getItem(PREFIX + id);
+            if (saved !== null && saved !== "") {
+                el.value = saved;
+            } else if (defaultValue) {
+                el.value = defaultValue;
+                localStorage.setItem(PREFIX + id, defaultValue);
+            }
+        }
 
-                // 监听持久化字段
-                watch(config, (newVal) => {
-                    localStorage.setItem(PREFIX + 'config', JSON.stringify(newVal));
-                }, { deep: true });
+        function toggleConfig() {
+            const panel = document.getElementById('config_panel');
+            panel.style.display = panel.style.display === 'none' || panel.style.display === '' ? 'block' : 'none';
+        }
 
-                watch(() => order.title, (newVal) => {
-                    localStorage.setItem(PREFIX + 'title', newVal);
-                });
+        function generateReceiptNo() {
+            const now = new Date();
+            const dateStr = now.getFullYear().toString() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
+            const rand1 = Math.floor(Math.random() * 90000) + 10000; 
+            const rand2 = Math.floor(Math.random() * 900000) + 100000; 
+            document.getElementById('f_receiptNo').value = `HTD-${rand1}-${dateStr}${rand2}`;
+            updatePreview();
+        }
 
-                // 生成随机单号
-                const generateReceiptNo = () => {
-                    const now = new Date();
-                    const dateStr = now.getFullYear().toString() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
-                    const rand1 = Math.floor(Math.random() * 90000) + 10000;
-                    const rand2 = Math.floor(Math.random() * 900000) + 100000;
-                    order.receiptNo = `HTD-${rand1}-${dateStr}${rand2}`;
-                };
+        function addEmptyItem(data = { productName: '', category: '', quantity: 1, unitPrice: 0 }) {
+            const container = document.getElementById('items_container');
+            const id = 'item_' + (++itemCounter);
+            
+            const html = `
+                <div class="item-box" id="${id}">
+                    <div class="item-box-header">
+                        商品明细 <button class="btn-danger" onclick="removeItem('${id}')">删除</button>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" style="flex:2"><label>商品名称</label><input type="text" class="i-name" value="${data.productName}" oninput="updatePreview()"></div>
+                        <div class="form-group" style="flex:1"><label>类别</label><input type="text" class="i-category" value="${data.category}" oninput="updatePreview()"></div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group"><label>数量</label><input type="number" class="i-qty" value="${data.quantity}" oninput="updatePreview()"></div>
+                        <div class="form-group"><label>单价</label><input type="number" class="i-price" value="${data.unitPrice}" oninput="updatePreview()"></div>
+                    </div>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', html);
+            updatePreview();
+        }
 
-                // 添加/删除商品
-                const addItem = (data = {}) => {
-                    items.value.push({
-                        id: Date.now() + Math.random(),
-                        productName: data.productName || '',
-                        category: data.category || '',
-                        quantity: Number(data.quantity) || 1,
-                        unitPrice: Number(data.unitPrice) || 0
-                    });
-                };
-                const removeItem = (index) => {
-                    items.value.splice(index, 1);
-                };
+        function removeItem(id) {
+            document.getElementById(id).remove();
+            updatePreview();
+        }
 
-                // 计算属性
-                const totalAmount = computed(() => {
-                    return items.value.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
-                });
-
-                // 数字转中文大写
-                const numberToChinese = (money) => {
-                    var cnNums = ["零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖"];
-                    var cnIntRadice = ["", "拾", "佰", "仟"];
-                    var cnIntUnits = ["", "万", "亿", "兆"];
-                    var cnDecUnits = ["角", "分", "毫", "厘"];
-                    var cnInteger = "整";
-                    var cnIntLast = "元";
-                    var maxNum = 999999999999999.9999;
-                    if (!money) return "零元整";
-                    money = parseFloat(money);
-                    if (money >= maxNum) return "";
-                    if (money == 0) return cnNums[0] + cnIntLast + cnInteger;
-
-                    money = money.toString();
-                    let IntegerNum, DecimalNum;
-                    if (money.indexOf(".") == -1) { IntegerNum = money; DecimalNum = ''; }
+        function numberToChinese(money) {
+            var cnNums = new Array("零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖");
+            var cnIntRadice = new Array("", "拾", "佰", "仟");
+            var cnIntUnits = new Array("", "万", "亿", "兆");
+            var cnDecUnits = new Array("角", "分", "毫", "厘");
+            var cnInteger = "整";
+            var cnIntLast = "元";
+            var maxNum = 999999999999999.9999;
+            var IntegerNum; var DecimalNum; var ChineseStr = ""; var parts;
+            if (money == "") { return ""; }
+            money = parseFloat(money);
+            if (money >= maxNum) { return ""; }
+            if (money == 0) { ChineseStr = cnNums[0] + cnIntLast + cnInteger; return ChineseStr; }
+            money = money.toString();
+            if (money.indexOf(".") == -1) { IntegerNum = money; DecimalNum = ''; } 
+            else { parts = money.split("."); IntegerNum = parts[0]; DecimalNum = parts[1].substr(0, 4); }
+            if (parseInt(IntegerNum, 10) > 0) {
+                var zeroCount = 0; var IntLen = IntegerNum.length;
+                for (var i = 0; i < IntLen; i++) {
+                    var n = IntegerNum.substr(i, 1); var p = IntLen - i - 1; var q = p / 4; var m = p % 4;
+                    if (n == "0") { zeroCount++; } 
                     else {
-                        let parts = money.split(".");
-                        IntegerNum = parts[0];
-                        DecimalNum = parts[1].substr(0, 4);
+                        if (zeroCount > 0) { ChineseStr += cnNums[0]; }
+                        zeroCount = 0; ChineseStr += cnNums[parseInt(n)] + cnIntRadice[m];
                     }
+                    if (m == 0 && zeroCount < 4) { ChineseStr += cnIntUnits[q]; }
+                }
+                ChineseStr += cnIntLast;
+            }
+            if (DecimalNum != '') {
+                var decLen = DecimalNum.length;
+                for (var i = 0; i < decLen; i++) {
+                    var n = DecimalNum.substr(i, 1);
+                    if (n != '0') { ChineseStr += cnNums[Number(n)] + cnDecUnits[i]; }
+                }
+            }
+            if (ChineseStr == '') { ChineseStr += cnNums[0] + cnIntLast + cnInteger; } 
+            else if (DecimalNum == '') { ChineseStr += cnInteger; }
+            return ChineseStr;
+        }
 
-                    let ChineseStr = "";
-                    if (parseInt(IntegerNum, 10) > 0) {
-                        let zeroCount = 0; let IntLen = IntegerNum.length;
-                        for (let i = 0; i < IntLen; i++) {
-                            let n = IntegerNum.substr(i, 1); let p = IntLen - i - 1; let q = Math.floor(p / 4); let m = p % 4;
-                            if (n == "0") { zeroCount++; }
-                            else {
-                                if (zeroCount > 0) { ChineseStr += cnNums[0]; }
-                                zeroCount = 0; ChineseStr += cnNums[parseInt(n)] + cnIntRadice[m];
-                            }
-                            if (m == 0 && zeroCount < 4) { ChineseStr += cnIntUnits[q]; }
-                        }
-                        ChineseStr += cnIntLast;
-                    }
-                    if (DecimalNum != '') {
-                        let decLen = DecimalNum.length;
-                        for (let i = 0; i < decLen; i++) {
-                            let n = DecimalNum.substr(i, 1);
-                            if (n != '0') { ChineseStr += cnNums[Number(n)] + cnDecUnits[i]; }
-                        }
-                    }
-                    if (ChineseStr == '') { ChineseStr += cnNums[0] + cnIntLast + cnInteger; }
-                    else if (DecimalNum == '') { ChineseStr += cnInteger; }
-                    return ChineseStr;
-                };
+        // 更新预览区
+        function updatePreview() {
+            const fields = ['title', 'receiptNo', 'date', 'customer', 'phone', 'address', 'remarks'];
+            fields.forEach(f => {
+                const previewEl = document.getElementById('p_' + f);
+                const inputEl = document.getElementById('f_' + f);
+                if(previewEl && inputEl) {
+                    previewEl.innerText = inputEl.value;
+                }
+            });
 
-                const totalAmountUpper = computed(() => numberToChinese(totalAmount.value));
+            const itemBoxes = document.querySelectorAll('.item-box');
+            const tbody = document.getElementById('p_items_tbody');
+            tbody.innerHTML = ''; 
+            
+            let totalAmount = 0;
 
-                // 调用打印
-                const handlePrint = () => {
-                    drawerVisible.value = false;
-                    setTimeout(() => {
-                        window.print();
-                    }, 300); // 留点时间给抽屉关上动画
-                };
+            itemBoxes.forEach(box => {
+                const name = box.querySelector('.i-name').value;
+                const cat = box.querySelector('.i-category').value;
+                const qty = parseFloat(box.querySelector('.i-qty').value) || 0;
+                const price = parseFloat(box.querySelector('.i-price').value) || 0;
+                const amount = qty * price;
+                totalAmount += amount;
 
-                // AI 识别分析
-                const analyzeText = async () => {
-                    const text = aiInput.value.trim();
-                    if (!text) {
-                        ElementPlus.ElMessage.warning('请输入需要识别的文本！');
-                        return;
-                    }
-                    if (!config.baseUrl || !config.apiKey) {
-                        showConfig.value = true;
-                        ElementPlus.ElMessage.error('请先配置大模型的 BaseURL 和 API Key！');
-                        return;
-                    }
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="text-align: left; padding-left:10px;">${name}</td>
+                    <td>${cat}</td>
+                    <td>${qty}</td>
+                    <td>${price}</td>
+                    <td>${amount}</td>
+                `;
+                tbody.appendChild(tr);
+            });
 
-                    isAnalyzing.value = true;
-                    const prompt = `
+            if (itemBoxes.length === 0) {
+                tbody.innerHTML = `<tr><td style="text-align: left; padding-left:10px;">&nbsp;</td><td></td><td></td><td></td><td></td></tr>`;
+            }
+
+            document.getElementById('p_total').innerText = totalAmount.toFixed(2);
+            document.getElementById('p_amountLower').innerText = totalAmount.toFixed(2);
+            document.getElementById('p_amountUpper').innerText = numberToChinese(totalAmount);
+        }
+
+        // 大模型识别功能
+        async function analyzeText() {
+            const btn = document.getElementById('btn_analyze');
+            const text = document.getElementById('ai_input').value.trim();
+            const url = document.getElementById('cfg_baseurl').value.trim();
+            const key = document.getElementById('cfg_key').value.trim();
+            const model = document.getElementById('cfg_model').value.trim();
+
+            if (!text) return alert("请输入需要识别的文本！");
+            if (!url || !key) {
+                if(!document.getElementById('sidebar').classList.contains('open')) toggleSidebar();
+                toggleConfig(); 
+                return alert("请先配置大模型的 BaseURL 和 API Key！");
+            }
+
+            btn.disabled = true;
+            btn.innerText = "⏳ AI 分析处理中...";
+
+            const prompt = `
 你是一个订单信息提取助手。请从以下文本中提取订单信息，并严格以JSON格式输出。
 如果没有提到的字段，请输出空字符串 ""。数字类型的请输出纯数字。如果有多个商品请提取为数组。
 需要返回的JSON结构如下：
@@ -682,74 +494,62 @@
 
 请直接输出包含上述键名的JSON对象，不要加多余文字或markdown代码块标记。`;
 
-                    try {
-                        let apiUrl = config.baseUrl;
-                        if (!apiUrl.endsWith('/chat/completions')) {
-                            apiUrl = apiUrl.replace(/\/$/, '') + '/chat/completions';
-                        }
+            try {
+                let apiUrl = url;
+                if (!apiUrl.endsWith('/chat/completions')) {
+                    apiUrl = apiUrl.replace(/\/$/, '') + '/chat/completions';
+                }
 
-                        const response = await fetch(apiUrl, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${config.apiKey}`
-                            },
-                            body: JSON.stringify({
-                                model: config.model,
-                                messages: [{ role: "user", content: prompt }],
-                                temperature: 0.1
-                            })
-                        });
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${key}`
+                    },
+                    body: JSON.stringify({
+                        model: model,
+                        messages: [{ role: "user", content: prompt }],
+                        temperature: 0.1
+                    })
+                });
 
-                        if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+                if (!response.ok) {
+                    throw new Error(`HTTP Error: ${response.status}`);
+                }
 
-                        const data = await response.json();
-                        let aiContent = data.choices[0].message.content.trim();
-                        aiContent = aiContent.replace(/^```json/i, '').replace(/^```/, '').replace(/```$/, '').trim();
+                const data = await response.json();
+                let aiContent = data.choices[0].message.content.trim();
+                
+                aiContent = aiContent.replace(/^```json/i, '').replace(/^```/, '').replace(/```$/, '').trim();
 
-                        const result = JSON.parse(aiContent);
+                const result = JSON.parse(aiContent);
 
-                        // 填入基础信息
-                        const mapKeys = ['customer', 'phone', 'address', 'remarks'];
-                        mapKeys.forEach(k => {
-                            if (result[k] !== undefined && result[k] !== "") {
-                                order[k] = result[k];
-                            }
-                        });
-
-                        // 填入商品信息
-                        if (result.items && Array.isArray(result.items)) {
-                            items.value = []; // 清空现有
-                            result.items.forEach(item => {
-                                addItem(item);
-                            });
-                        }
-
-                        ElementPlus.ElMessage.success('AI 识别成功并已填入表单！');
-                    } catch (error) {
-                        console.error(error);
-                        ElementPlus.ElMessage.error("识别失败，请检查模型配置是否正确。\n" + error.message);
-                    } finally {
-                        isAnalyzing.value = false;
+                const mapKeys = ['customer', 'phone', 'address', 'remarks'];
+                mapKeys.forEach(k => {
+                    if (result[k] !== undefined && result[k] !== "") {
+                        document.getElementById('f_' + k).value = result[k];
                     }
-                };
+                });
 
-                return {
-                    drawerVisible, showConfig, isAnalyzing, aiInput,
-                    config, order, items, totalAmount, totalAmountUpper,
-                    generateReceiptNo, addItem, removeItem, handlePrint, analyzeText
-                };
+                if (result.items && Array.isArray(result.items)) {
+                    document.getElementById('items_container').innerHTML = ''; 
+                    itemCounter = 0;
+                    result.items.forEach(item => {
+                        addEmptyItem(item);
+                    });
+                }
+
+                updatePreview();
+                alert("✅ AI 识别成功并已填入表单！");
+
+            } catch (error) {
+                console.error(error);
+                alert("❌ 识别失败，请检查模型配置是否正确或F12控制台报错信息。\n错误信息: " + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "🧠 AI 智能识别并填入表单";
             }
-        });
-
-        // 全局注册 Element Plus 图标
-        for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
-            app.component(key, component);
         }
-
-        app.use(ElementPlus);
-        app.mount('#app');
     </script>
 </body>
-
 </html>
