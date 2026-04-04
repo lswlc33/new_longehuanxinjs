@@ -5,8 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>单据生成系统</title>
     <style>
-        /* 全局样式 */
-        body { font-family: 'Microsoft YaHei', SimHei, sans-serif; margin: 0; padding: 0; background-color: #f0f2f5; }
+        /* 引入 MiSans 字体 (优先使用本地，若无则从CDN加载) */
+        @font-face {
+            font-family: 'MiSans';
+            src: local('MiSans'), 
+                 url('https://fastly.jsdelivr.net/gh/wzxstyle/MiSans@master/MiSans-Regular.woff2') format('woff2');
+            font-weight: normal;
+        }
+        @font-face {
+            font-family: 'MiSans';
+            src: local('MiSans'), 
+                 url('https://fastly.jsdelivr.net/gh/wzxstyle/MiSans@master/MiSans-Bold.woff2') format('woff2');
+            font-weight: bold;
+        }
+
+        /* 全局样式 - 设为 MiSans 首选 */
+        body { font-family: 'MiSans', 'Microsoft YaHei', SimHei, sans-serif; margin: 0; padding: 0; background-color: #f0f2f5; }
         * { box-sizing: border-box; }
 
         /* 悬浮切换按钮 */
@@ -24,6 +38,7 @@
             font-size: 14px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.2);
             transition: background 0.3s;
+            font-family: inherit;
         }
         .toggle-btn:hover { background-color: #4096ff; }
 
@@ -59,7 +74,7 @@
         .form-row { display: flex; gap: 10px; }
         .form-row .form-group { flex: 1; }
         
-        button { background-color: #1677ff; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background 0.3s; }
+        button { font-family: inherit; background-color: #1677ff; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-size: 14px; transition: background 0.3s; }
         button:hover { background-color: #4096ff; }
         button.btn-danger { background-color: #ff4d4f; padding: 4px 8px; font-size: 12px;}
         button.btn-danger:hover { background-color: #ff7875; }
