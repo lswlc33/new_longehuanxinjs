@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>批量标签生成器</title>
+    <!-- 引入生成条形码的库 -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.0/dist/JsBarcode.all.min.js"></script>
+    <!-- 引入生成二维码的库 -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
+    <style>
+        /* 强制全局使用黑体 */
+        body {
+            font-family: 'SimHei', '黑体', sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+
+        /* 控制面板样式 */
+        .controls-panel {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            max-width: 600px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .form-group input[type="text"],
+        .form-group textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-family: 'SimHei', '黑体', sans-serif;
+            /* 输入框也使用黑体 */
+        }
+
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+            font-family: 'SimHei', '黑体', sans-serif;
+        }
+
+        button.print-btn {
+            background-color: #2196F3;
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        /* 标签容器排版 */
+        #labels-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        /* 单个标签的样式 */
+        .label-box {
+            background: white;
+            width: 360px;
+            /* 稍微加宽一点适应较长的数字 */
+            height: 115px;
+            padding: 10px 15px;
+            border: 1px dashed #999;
+            box-sizing: border-box;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background-color: #fff;
+            page-break-inside: avoid;
+        }
+
+        /* 左侧：标题、条码、数字 */
+        .left-section {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            /* 关键：让左侧三个元素垂直居中对齐 */
+            height: 100%;
+            width: 75%;
+        }
+
+        .label-title {
+            font-size: 14px;
+            /* 黑体显示较小，适当加大字号 */
+            font-weight: bold;
+            color: #000;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            width: 100%;
+            text-align: center;
+            /* 文字居中 */
+        }
+
+        .barcode-container {
+            margin: 0px 0;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            /* 条码SVG容器内居中 */
+        }
+
+        .barcode-container svg {
+            height: 45px;
+            /* 条码高度 */
+            /* 移除 width: 100% 防止条码被强制拉伸变形 */
+        }
+
+        .label-code {
+            font-size: 15px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            width: 100%;
+            text-align: center;
+            /* 数字居中 */
+        }
+
+        /* 右侧：二维码 */
+        .right-section {
+            width: 20%;
+            display: flex;
+            justify-content: flex-end;
+            align-items: center;
+        }
+
+        /* 打印模式下的样式调整 */
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+
+            .controls-panel {
+                display: none;
+            }
+
+            #labels-container {
+                gap: 2px;
+            }
+
+            .label-box {
+                border: 1px solid #eee;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- 顶部控制面板 -->
+    <div class="controls-panel">
+        <h2>批量标签生成器</h2>
+        <div class="form-group">
+            <label for="titleInput">指定标题:</label>
+            <input type="text" id="titleInput" value="MIDEA KFR-35G/G3-3 结算专用">
+        </div>
+        <div class="form-group">
+            <label for="codesInput">输入大量不同数字编码 (每行输入一个，回车换行):</label>
+            <textarea id="codesInput" rows="8">51122013015X11307X08X4</textarea>
+        </div>
+        <button onclick="generateLabels()">一键生成</button>
+        <button class="print-btn" onclick="window.print()">打印标签</button>
+    </div>
+
+    <!-- 生成的标签将显示在这里 -->
+    <div id="labels-container"></div>
+
+    <script>
+        function generateLabels() {
+            const title = document.getElementById('titleInput').value.trim();
+            const codesRaw = document.getElementById('codesInput').value;
+            const container = document.getElementById('labels-container');
+
+            container.innerHTML = '';
+
+            const codes = codesRaw.split('\n')
+                .map(code => code.trim())
+                .filter(code => code !== '');
+
+            if (codes.length === 0) {
+                alert('请输入至少一个数字编码！');
+                return;
+            }
+
+            codes.forEach(code => {
+                const labelBox = document.createElement('div');
+                labelBox.className = 'label-box';
+
+                // 左侧容器
+                const leftSection = document.createElement('div');
+                leftSection.className = 'left-section';
+
+                const titleDiv = document.createElement('div');
+                titleDiv.className = 'label-title';
+                titleDiv.innerText = title;
+
+                const barcodeContainer = document.createElement('div');
+                barcodeContainer.className = 'barcode-container';
+                const svgNode = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                barcodeContainer.appendChild(svgNode);
+
+                const codeTextDiv = document.createElement('div');
+                codeTextDiv.className = 'label-code';
+                codeTextDiv.innerText = code;
+
+                leftSection.appendChild(titleDiv);
+                leftSection.appendChild(barcodeContainer);
+                leftSection.appendChild(codeTextDiv);
+
+                // 右侧容器
+                const rightSection = document.createElement('div');
+                rightSection.className = 'right-section';
+                const qrNode = document.createElement('div');
+                rightSection.appendChild(qrNode);
+
+                labelBox.appendChild(leftSection);
+                labelBox.appendChild(rightSection);
+                container.appendChild(labelBox);
+
+                // 生成一维码
+                try {
+                    JsBarcode(svgNode, code, {
+                        format: "CODE128",
+                        displayValue: false,
+                        height: 45,
+                        width: 1.2,
+                        margin: 0
+                    });
+                } catch (e) {
+                    console.error("条码生成失败，检查是否包含非法字符: " + code);
+                }
+
+                // 生成二维码
+                new QRCode(qrNode, {
+                    text: code,
+                    width: 70,
+                    height: 70,
+                    colorDark: "#000000",
+                    colorLight: "#ffffff",
+                    correctLevel: QRCode.CorrectLevel.L
+                });
+            });
+        }
+
+        window.onload = generateLabels;
+    </script>
+</body>
+
+</html>
