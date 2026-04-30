@@ -170,7 +170,19 @@ mdui-select {
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
-    margin-bottom: 16px;
+    margin-bottom: 4px;
+}
+
+.chip-container.collapsed {
+    max-height: 76px;
+    overflow: hidden;
+}
+
+.chip-expand-toggle {
+    display: flex;
+    justify-content: center;
+    margin-top: -12px;
+    margin-bottom: -8px;
 }
 
 .chip-container mdui-chip {

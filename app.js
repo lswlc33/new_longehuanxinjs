@@ -55,7 +55,8 @@
         currentStoreIndex: 0,
         recentGoodsList: [],
         versionClickCount: 0,
-        versionClickTimer: null
+        versionClickTimer: null,
+        currentDetailOrder: null
     };
 
     const els = {};
@@ -1470,6 +1471,7 @@
 
     function renderOrderDetail(dialog, order, detailPushBtn) {
         const product = order.goodsOrderList?.[0] || {};
+        state.currentDetailOrder = order;
 
         dialog.querySelectorAll('[slot="action"]').forEach(el => el.remove());
 
@@ -1530,7 +1532,11 @@
             ${itemHtml('门店销售单号', order.shopOrderNumber)}
             ${itemHtml('建行交易单号', order.ccbPayOrderNumber, true)}
             <div class="detail-divider"></div>
-            <div class="section-sub-title">商品与地址</div>
+            <div class="section-sub-title" style="display: flex; align-items: center; justify-content: space-between;">
+                <span>商品与地址</span>
+                <mdui-button variant="text" class="fill-order-detail-btn"
+                    style="color: rgb(var(--mdui-color-error)); font-size: 12px; height: 28px; min-width: 0;">一键填入</mdui-button>
+            </div>
             ${itemHtml('品牌', product.brand)} ${itemHtml('商品分类', product.goodsType)}
             ${itemHtml('商品编号', product.goodsCode || order.goodsCode || '-', true)} ${itemHtml('商品型号', product.goodsModel, true)}
             ${itemHtml('收货地址', order.address, true)}
@@ -1539,6 +1545,74 @@
             ${itemHtml('开单原价', `¥${order.shopOriginalPrice}`)} ${itemHtml('政府补贴', `¥${order.subsidyTotalAmount}`)}
             ${itemHtml('实付金额', `¥${order.shopActualPayPrice}`, true)}
         `;
+    }
+
+    function parseOrderAddress(address) {
+        if (!address) return { city: "", district: "", town: "", detail: "" };
+        const parts = address.split('-').map(p => p.trim()).filter(p => p);
+        let cityIdx = -1, distIdx = -1, townIdx = -1;
+        let city = "", district = "", town = "";
+
+        for (let i = 0; i < parts.length; i++) {
+            if (state.regionTree[parts[i]]) {
+                cityIdx = i;
+                city = parts[i];
+                break;
+            }
+        }
+        if (cityIdx === -1) return { city: "", district: "", town: "", detail: address };
+
+        for (let i = cityIdx + 1; i < parts.length; i++) {
+            if (state.regionTree[city]?.[parts[i]]) {
+                distIdx = i;
+                district = parts[i];
+                break;
+            }
+        }
+        if (distIdx === -1) return { city, district: "", town: "", detail: parts.slice(cityIdx + 1).join('-') };
+
+        const towns = state.regionTree[city][district] || [];
+        for (let i = distIdx + 1; i < parts.length; i++) {
+            const matched = towns.find(t => t.text === parts[i] || t.text.includes(parts[i]));
+            if (matched) {
+                townIdx = i;
+                town = matched.text;
+                break;
+            }
+        }
+
+        const detailStart = townIdx !== -1 ? townIdx + 1 : distIdx + 1;
+        return { city, district, town, detail: parts.slice(detailStart).join('-') };
+    }
+
+    async function fillOrderToForm() {
+        const order = state.currentDetailOrder;
+        if (!order) return;
+
+        const product = order.goodsOrderList?.[0] || {};
+
+        const addrParts = parseOrderAddress(order.address || "");
+        applyParsedAddress({
+            mobile: "",
+            city: addrParts.city,
+            district: addrParts.district,
+            town: addrParts.town,
+            detail: addrParts.detail
+        });
+
+        const goodsCode = product.goodsCode || order.goodsCode || "";
+        if (goodsCode) {
+            document.querySelector('#goodsCode').value = goodsCode;
+            await queryGoodsInfo();
+            if (order.shopOriginalPrice) {
+                document.querySelector('#shopPrice').value = order.shopOriginalPrice;
+                calcPrice();
+            }
+        }
+
+        els.detailDialog.open = false;
+        document.getElementById('orderDrawer').open = false;
+        mdui.snackbar({ message: "已填入订单信息" });
     }
 
     async function cancelOrder() {
@@ -1724,10 +1798,34 @@
             const validCodes = (res.data.countrySubsidyCateCodes || "").split(',').map(c => c.trim());
             mdui.snackbar({ message: `查询成功`, closeable: true });
             chips.forEach(c => c.selected = validCodes.includes(c.value));
+            sortSelectedChipsToTop();
         } else {
             addLog(`资格查询失败: ${res?.msg}`, "error");
             showError(res?.msg || "查询无响应");
             chips.forEach(c => c.selected = false);
+        }
+    }
+
+    function sortSelectedChipsToTop() {
+        const container = document.getElementById('productCategoryChips');
+        const chips = Array.from(container.querySelectorAll('mdui-chip'));
+        const selected = chips.filter(c => c.selected);
+        const unselected = chips.filter(c => !c.selected);
+        container.innerHTML = '';
+        selected.forEach(c => container.appendChild(c));
+        unselected.forEach(c => container.appendChild(c));
+    }
+
+    function toggleChipExpand() {
+        const container = document.getElementById('productCategoryChips');
+        const btn = document.getElementById('chipExpandBtn');
+        const isCollapsed = container.classList.contains('collapsed');
+        if (isCollapsed) {
+            container.classList.remove('collapsed');
+            btn.innerText = '收起';
+        } else {
+            container.classList.add('collapsed');
+            btn.innerText = '展开全部';
         }
     }
 
@@ -2178,9 +2276,15 @@
         document.getElementById('closePushDialogBtn').addEventListener('click', closePushDialog);
         document.getElementById('confirmPushBtn').addEventListener('click', confirmPush);
         document.getElementById('detailPushBtn').addEventListener('click', openDetailPushDialog);
+        document.getElementById('detailContent').addEventListener('click', (e) => {
+            if (e.target.closest('.fill-order-detail-btn')) {
+                fillOrderToForm();
+            }
+        });
 
         document.getElementById('smartParseBtn').addEventListener('click', smartParse);
         document.getElementById('checkQualificationBtn').addEventListener('click', checkQualification);
+        document.getElementById('chipExpandBtn').addEventListener('click', toggleChipExpand);
         document.getElementById('autoOrderNumCheckbox').addEventListener('change', toggleOrderInput);
         document.getElementById('goodsCode').addEventListener('blur', queryGoodsInfo);
         document.getElementById('shopPrice').addEventListener('change', calcPrice);

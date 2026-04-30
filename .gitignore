@@ -1,2 +1,6 @@
 .vscode/launch.json
 node_modules/
+.kilocode/rules/memory-bank-instructions.md
+.gitignore
+.kilocode/rules/memory-bank/brief.md
+.kilocode/rules/memory-bank/product.md
