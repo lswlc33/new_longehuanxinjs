@@ -1785,9 +1785,19 @@
     }
 
     async function checkQualification() {
-        const mobile = document.querySelector('#buyerMobile').value;
-        if (!mobile) return showError("请输入手机号");
-        if (!state.currentToken) return showError("系统未就绪");
+        const mobileField = document.getElementById('buyerMobile');
+        const mobile = mobileField.value;
+        mobileField.setCustomValidity('');
+        if (!mobile) {
+            mobileField.setCustomValidity('请输入手机号');
+            mobileField.reportValidity();
+            return;
+        }
+        if (!state.currentToken) {
+            mobileField.setCustomValidity('系统未就绪');
+            mobileField.reportValidity();
+            return;
+        }
 
         addLog(`校验买家资格: ${mobile}`, "info");
         const res = await callApi('/salesuser/queryCustomerChannelSubsidyBalance', 'GET', { buyerMobile: mobile });
@@ -1800,8 +1810,10 @@
             chips.forEach(c => c.selected = validCodes.includes(c.value));
             sortSelectedChipsToTop();
         } else {
-            addLog(`资格查询失败: ${res?.msg}`, "error");
-            showError(res?.msg || "查询无响应");
+            const errMsg = res?.msg || "查询无响应";
+            addLog(`资格查询失败: ${errMsg}`, "error");
+            mobileField.setCustomValidity(errMsg);
+            mobileField.reportValidity();
             chips.forEach(c => c.selected = false);
         }
     }
@@ -1852,20 +1864,58 @@
         }
     }
 
-    async function calcPrice() {
-        const shopPrice = document.querySelector('#shopPrice').value;
-        const goodsCode = document.querySelector('#goodsCode').value;
-        if (!shopPrice || !goodsCode) return;
+    let _calcGuard = false;
 
-        const res = await callApi('/salesuser/calShopGoodsPrice', 'GET', {
-            shopPrice, goodsCode, goodsCount: "1", uniscid: ""
-        });
-        if (res?.code === 0 && res.data) {
-            document.querySelector('#actualPrice').value = res.data.payPrice;
-            document.querySelector('#subsidyPrice').value = res.data.subsidyAmount;
-        } else {
-            showError(res?.msg || "计算失败");
+    function formatPrice(v) {
+        const n = Math.round(v * 100) / 100;
+        return n % 1 === 0 ? n.toFixed(0) : n.toFixed(2);
+    }
+
+    function calcPrice() {
+        if (_calcGuard) return;
+        let shopPrice = parseFloat(document.querySelector('#shopPrice').value);
+        if (isNaN(shopPrice)) return;
+
+        const filingPrice = parseFloat(document.querySelector('#filingPrice').value);
+        if (!isNaN(filingPrice) && filingPrice > 0 && shopPrice > filingPrice) {
+            shopPrice = filingPrice;
+            document.querySelector('#shopPrice').value = formatPrice(shopPrice);
         }
+
+        let actualPrice;
+        if (shopPrice <= 10000) {
+            actualPrice = shopPrice * 0.85;
+        } else {
+            actualPrice = (shopPrice - 10000) * 1.85;
+        }
+
+        _calcGuard = true;
+        document.querySelector('#actualPrice').value = formatPrice(actualPrice);
+        document.querySelector('#subsidyPrice').value = formatPrice(shopPrice - actualPrice);
+        _calcGuard = false;
+    }
+
+    function reverseCalcPrice() {
+        if (_calcGuard) return;
+        const actualPrice = parseFloat(document.querySelector('#actualPrice').value);
+        if (isNaN(actualPrice)) return;
+
+        let shopPrice;
+        if (actualPrice <= 8500) {
+            shopPrice = actualPrice / 0.85;
+        } else {
+            shopPrice = actualPrice / 1.85 + 10000;
+        }
+
+        const filingPrice = parseFloat(document.querySelector('#filingPrice').value);
+        if (!isNaN(filingPrice) && filingPrice > 0 && shopPrice > filingPrice) {
+            shopPrice = filingPrice;
+        }
+
+        _calcGuard = true;
+        document.querySelector('#shopPrice').value = formatPrice(shopPrice);
+        document.querySelector('#subsidyPrice').value = formatPrice(shopPrice - actualPrice);
+        _calcGuard = false;
     }
 
     async function generateNextOrderNumber() {
@@ -2284,10 +2334,12 @@
 
         document.getElementById('smartParseBtn').addEventListener('click', smartParse);
         document.getElementById('checkQualificationBtn').addEventListener('click', checkQualification);
+        document.getElementById('buyerMobile').addEventListener('input', function () { this.setCustomValidity(''); });
         document.getElementById('chipExpandBtn').addEventListener('click', toggleChipExpand);
         document.getElementById('autoOrderNumCheckbox').addEventListener('change', toggleOrderInput);
         document.getElementById('goodsCode').addEventListener('blur', queryGoodsInfo);
         document.getElementById('shopPrice').addEventListener('change', calcPrice);
+        document.getElementById('actualPrice').addEventListener('change', reverseCalcPrice);
         document.getElementById('checkSncodeBtn').addEventListener('click', checkSncode);
         document.getElementById('submitOrderBtn').addEventListener('click', submitOrder);
         document.getElementById('versionTrigger').addEventListener('click', handleVersionClick);
