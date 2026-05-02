@@ -1858,7 +1858,8 @@
 
             const price = parseFloat(res.data.subsidyBackPrice);
             if (price > 10000) {
-                const float = (price - 10000) % 1000;
+                const maxFloat = Math.min(price - 10000, 1000);
+                const float = Math.floor(Math.random() * (maxFloat + 1));
                 document.querySelector('#shopPrice').value = formatPrice(10000 + float);
             } else {
                 document.querySelector('#shopPrice').value = res.data.subsidyBackPrice;
