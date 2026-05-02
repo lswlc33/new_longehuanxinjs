@@ -27,10 +27,12 @@
 
     const payStates = {
         0: "待付款", 1: "支付中", 2: "已付款",
-        3: "支付失败", 4: "支付超时", 5: "已退款", 6: "订单取消"
+        3: "支付失败", 4: "支付超时", 5: "已退款", 6: "订单已取消",
+        7: "退款中", 8: "已退款", 9: "退款中",
+        10: "部分退款-已退款", 11: "部分退款-退款中", 12: "部分退款-全额已退"
     };
 
-    const ORDER_TERMINAL_STATES = [2, 3, 4, 5, 6];
+    const ORDER_TERMINAL_STATES = [2, 3, 4, 5, 6, 8, 10, 12];
 
     const state = {
         loginPayload: CONSTANTS.DEFAULT_PAYLOAD,
@@ -1368,6 +1370,8 @@
                     orders = orders.filter(o => o.payState === 0 || o.payState === 1);
                 } else if (filterVal === "queue") {
                     orders = orders.filter(o => findOrderInQueue(o.ccbPayOrderNumber) !== null);
+                } else if (filterVal === "5") {
+                    orders = orders.filter(o => [5, 7, 8, 9, 10, 11, 12].includes(o.payState));
                 } else {
                     orders = orders.filter(o => o.payState === parseInt(filterVal, 10));
                 }

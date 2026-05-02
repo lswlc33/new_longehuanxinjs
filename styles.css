@@ -358,10 +358,21 @@ mdui-select {
     border: 1px solid #FFCDD2;
 }
 
-.status-5 {
+.status-5,
+.status-8,
+.status-10,
+.status-12 {
     background-color: #F5F5F5;
     color: #616161;
     border: 1px solid #E0E0E0;
+}
+
+.status-7,
+.status-9,
+.status-11 {
+    background-color: #FFF8E1;
+    color: #F57F17;
+    border: 1px solid #FFECB3;
 }
 
 .info-grid {
