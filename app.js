@@ -1857,7 +1857,12 @@
             document.querySelector('#filingPrice').value = res.data.subsidyBackPrice;
 
             const price = parseFloat(res.data.subsidyBackPrice);
-            document.querySelector('#shopPrice').value = (price > 10000) ? 10000 : res.data.subsidyBackPrice;
+            if (price > 10000) {
+                const float = (price - 10000) % 1000;
+                document.querySelector('#shopPrice').value = formatPrice(10000 + float);
+            } else {
+                document.querySelector('#shopPrice').value = res.data.subsidyBackPrice;
+            }
 
             calcPrice();
         } else {
@@ -1890,7 +1895,7 @@
         if (shopPrice <= 10000) {
             actualPrice = shopPrice * 0.85;
         } else {
-            actualPrice = (shopPrice - 10000) * 1.85;
+            actualPrice = 8500 + (shopPrice - 10000);
         }
 
         _calcGuard = true;
@@ -1908,7 +1913,7 @@
         if (actualPrice <= 8500) {
             shopPrice = actualPrice / 0.85;
         } else {
-            shopPrice = actualPrice / 1.85 + 10000;
+            shopPrice = 10000 + (actualPrice - 8500);
         }
 
         const filingPrice = parseFloat(document.querySelector('#filingPrice').value);
