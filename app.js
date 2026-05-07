@@ -58,7 +58,9 @@
         recentGoodsList: [],
         versionClickCount: 0,
         versionClickTimer: null,
-        currentDetailOrder: null
+        currentDetailOrder: null,
+        remindPollTimer: null,
+        isRemindPolling: false
     };
 
     const els = {};
@@ -1813,13 +1815,69 @@
             mdui.snackbar({ message: `查询成功`, closeable: true });
             chips.forEach(c => c.selected = validCodes.includes(c.value));
             sortSelectedChipsToTop();
+            stopRemindPolling();
+            showRemindBtn(false);
         } else {
             const errMsg = res?.msg || "查询无响应";
             addLog(`资格查询失败: ${errMsg}`, "error");
             mobileField.setCustomValidity(errMsg);
             mobileField.reportValidity();
             chips.forEach(c => c.selected = false);
+            showRemindBtn(true);
         }
+    }
+
+    function showRemindBtn(show) {
+        const btn = document.getElementById('remindQualificationBtn');
+        btn.style.display = show ? 'inline-flex' : 'none';
+    }
+
+    function stopRemindPolling() {
+        if (state.remindPollTimer) {
+            clearInterval(state.remindPollTimer);
+            state.remindPollTimer = null;
+        }
+        state.isRemindPolling = false;
+        const btn = document.getElementById('remindQualificationBtn');
+        btn.innerHTML = '等待领卷';
+        btn.disabled = false;
+    }
+
+    function startRemindPolling() {
+        if (state.isRemindPolling) return;
+        const mobile = document.getElementById('buyerMobile').value.trim();
+        if (!mobile || !state.currentToken) return;
+
+        state.isRemindPolling = true;
+        const btn = document.getElementById('remindQualificationBtn');
+        btn.innerHTML = '<mdui-circular-progress style="width:16px;height:16px;margin-right:4px;"></mdui-circular-progress>轮询中';
+        btn.disabled = true;
+        addLog(`开始轮询资格核验[${mobile}]`, "info");
+
+        state.remindPollTimer = setInterval(async () => {
+            const currentMobile = document.getElementById('buyerMobile').value.trim();
+            if (currentMobile !== mobile) {
+                stopRemindPolling();
+                showRemindBtn(false);
+                return;
+            }
+
+            addLog(`轮询资格核验: ${mobile}`, "info");
+            const res = await callApi('/salesuser/queryCustomerChannelSubsidyBalance', 'GET', { buyerMobile: mobile });
+
+            if (res?.code === 0) {
+                const validCodes = (res.data.countrySubsidyCateCodes || "").split(',').map(c => c.trim()).filter(c => c);
+                if (validCodes.length > 0) {
+                    addLog(`资格核验轮询成功，已获得品类`, "info");
+                    stopRemindPolling();
+                    showRemindBtn(false);
+                    const chips = document.querySelectorAll('#productCategoryChips mdui-chip');
+                    chips.forEach(c => c.selected = validCodes.includes(c.value));
+                    sortSelectedChipsToTop();
+                    document.getElementById('remindSuccessDialog').open = true;
+                }
+            }
+        }, 1000);
     }
 
     function sortSelectedChipsToTop() {
@@ -2344,7 +2402,15 @@
 
         document.getElementById('smartParseBtn').addEventListener('click', smartParse);
         document.getElementById('checkQualificationBtn').addEventListener('click', checkQualification);
-        document.getElementById('buyerMobile').addEventListener('input', function () { this.setCustomValidity(''); });
+        document.getElementById('remindQualificationBtn').addEventListener('click', startRemindPolling);
+        document.getElementById('closeRemindSuccessDialogBtn').addEventListener('click', () => {
+            document.getElementById('remindSuccessDialog').open = false;
+        });
+        document.getElementById('buyerMobile').addEventListener('input', function () {
+            this.setCustomValidity('');
+            stopRemindPolling();
+            showRemindBtn(false);
+        });
         document.getElementById('chipExpandBtn').addEventListener('click', toggleChipExpand);
         document.getElementById('autoOrderNumCheckbox').addEventListener('change', toggleOrderInput);
         document.getElementById('goodsCode').addEventListener('blur', queryGoodsInfo);

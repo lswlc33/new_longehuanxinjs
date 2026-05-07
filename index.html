@@ -170,6 +170,12 @@
         <mdui-button id="closeErrorDialogBtn" slot="action" variant="text">关闭</mdui-button>
     </mdui-dialog>
 
+    <mdui-dialog id="remindSuccessDialog" close-on-overlay-click>
+        <span slot="headline">提醒</span>
+        <div slot="description">已领卷</div>
+        <mdui-button id="closeRemindSuccessDialogBtn" slot="action" variant="text">好的</mdui-button>
+    </mdui-dialog>
+
     <mdui-dialog id="confirmDialog" close-on-overlay-click>
         <span slot="headline">取消订单确认</span>
         <div slot="description">您确定要取消该订单吗？此操作不可撤销。</div>
@@ -209,6 +215,7 @@
         <mdui-card variant="filled">
             <div class="section-header">
                 <span class="section-title">补贴资格申领人信息</span>
+                <mdui-button id="remindQualificationBtn" variant="tonal" class="btn-small" style="display:none;">等待领卷</mdui-button>
                 <mdui-button id="checkQualificationBtn" variant="tonal" class="btn-small">资格核验</mdui-button>
             </div>
             <mdui-text-field id="buyerMobile" label="手机号" variant="outlined" clearable></mdui-text-field>
