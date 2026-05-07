@@ -1033,10 +1033,21 @@
         mdui.snackbar({ message: "测试推送请求已发送" });
     }
 
+    const isAndroid = /Android/i.test(navigator.userAgent);
+
     function showNotification(title, body) {
         if (!("Notification" in window)) return;
         if (Notification.permission === "granted") {
-            new Notification(title, { body, icon: 'https://unpkg.com/mdui@2/icons/store.svg' });
+            const options = { body, icon: 'https://unpkg.com/mdui@2/icons/store.svg' };
+            if (isAndroid && navigator.serviceWorker && navigator.serviceWorker.controller) {
+                navigator.serviceWorker.ready.then(reg => reg.showNotification(title, options)).catch(() => {
+                    mdui.snackbar({ message: `${title}\n${body}` });
+                });
+            } else if (isAndroid) {
+                mdui.snackbar({ message: `${title}\n${body}` });
+            } else {
+                new Notification(title, options);
+            }
         }
     }
 
