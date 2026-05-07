@@ -164,6 +164,15 @@
         <mdui-button id="confirmImportBtn" slot="action" variant="filled">执行导入</mdui-button>
     </mdui-dialog>
 
+    <mdui-dialog id="changelogDialog" close-on-overlay-click>
+        <span slot="headline">版本更新</span>
+        <div slot="description">
+            <p style="margin-bottom: 8px; font-size: 13px; opacity: 0.7;">检测到新版本，以下是最近更新内容：</p>
+            <div id="changelogContent" style="white-space: pre-wrap; font-size: 13px; line-height: 1.8; max-height: 50vh; overflow-y: auto;"></div>
+        </div>
+        <mdui-button id="closeChangelogDialogBtn" slot="action" variant="text">知道了</mdui-button>
+    </mdui-dialog>
+
     <mdui-dialog id="errorDialog" close-on-overlay-click>
         <span slot="headline">提示</span>
         <div slot="description" id="errorContent">发生错误</div>

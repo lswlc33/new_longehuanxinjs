@@ -22,7 +22,8 @@
         PUSH_SENT_TTL_MS: 7 * 24 * 60 * 60 * 1000,
         LOG_MAX_ENTRIES: 300,
         VERSION_CLICK_THRESHOLD: 5,
-        VERSION_CLICK_TIMEOUT: 1200
+        VERSION_CLICK_TIMEOUT: 1200,
+        CACHED_VERSION_KEY: "APP_CACHED_VERSION"
     };
 
     const payStates = {
@@ -435,9 +436,55 @@
                 addLog(`版本号已同步 GitHub: ${finalVersion}`, "info");
             }
 
+            const cachedVersion = localStorage.getItem(CONSTANTS.CACHED_VERSION_KEY) || "";
+            if (cachedVersion && cachedVersion !== finalVersion) {
+                addLog(`版本变更: ${cachedVersion} -> ${finalVersion}，获取更新日志`, "info");
+                await fetchAndShowChangelog(latestDay, cachedVersion);
+            }
+            localStorage.setItem(CONSTANTS.CACHED_VERSION_KEY, finalVersion);
+
         } catch (error) {
             addLog(`同步版本号失败: ${error.message}`, "warn");
             console.error("Version Sync Error:", error);
+        }
+    }
+
+    async function fetchAndShowChangelog(latestDay, oldVersion) {
+        try {
+            const baseUrl = `https://api.github.com/repos/lswlc33/new_longehuanxinjs/commits`;
+            const res = await fetch(`${baseUrl}?per_page=10`);
+            if (!res.ok) return;
+            const commits = await res.json();
+            if (!Array.isArray(commits) || commits.length === 0) return;
+
+            const grouped = {};
+            for (const c of commits) {
+                const day = (c.commit.author.date || "").split('T')[0];
+                if (!day) continue;
+                if (!grouped[day]) grouped[day] = [];
+                const msg = (c.commit.message || "").split('\n')[0].trim();
+                if (msg) grouped[day].push(msg);
+            }
+
+            const days = Object.keys(grouped).sort((a, b) => b.localeCompare(a)).slice(0, 10);
+            if (!days.length) return;
+
+            const sections = days.map(day => {
+                const msgs = grouped[day];
+                const count = msgs.length;
+                const dateParts = day.split('-');
+                const yy = dateParts[0].slice(-2);
+                const mm = dateParts[1];
+                const dd = dateParts[2];
+                const ver = `V${yy}${mm}${dd}.${count}`;
+                const lines = msgs.map(m => `  · ${m}`);
+                return `【${ver}】 ${day}\n${lines.join('\n')}`;
+            });
+
+            document.getElementById('changelogContent').innerText = sections.join('\n\n');
+            document.getElementById('changelogDialog').open = true;
+        } catch (e) {
+            addLog(`获取更新日志失败: ${e.message}`, "warn");
         }
     }
 
@@ -2383,6 +2430,9 @@
 
         document.getElementById('closeErrorDialogBtn').addEventListener('click', () => {
             els.errorDialog.open = false;
+        });
+        document.getElementById('closeChangelogDialogBtn').addEventListener('click', () => {
+            document.getElementById('changelogDialog').open = false;
         });
 
         document.getElementById('closeConfirmDialogBtn').addEventListener('click', closeConfirmDialog);
