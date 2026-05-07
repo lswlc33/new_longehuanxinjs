@@ -2228,12 +2228,19 @@
 
         if (res?.code === 0) {
             addLog(`资格查询成功，返点Code: ${res.data.countrySubsidyCateCodes || '无'}`, "info");
-            const validCodes = (res.data.countrySubsidyCateCodes || "").split(',').map(c => c.trim());
-            mdui.snackbar({ message: `查询成功`, closeable: true });
+            const validCodes = (res.data.countrySubsidyCateCodes || "").split(',').map(c => c.trim()).filter(c => c);
             chips.forEach(c => c.selected = validCodes.includes(c.value));
             sortSelectedChipsToTop();
-            stopRemindPolling();
-            showRemindBtn(false);
+
+            if (validCodes.length > 0) {
+                mdui.snackbar({ message: `查询成功`, closeable: true });
+                stopRemindPolling();
+                showRemindBtn(false);
+            } else {
+                mdui.snackbar({ message: `查询成功，尚未领取品类资格`, closeable: true });
+                chips.forEach(c => c.selected = false);
+                showRemindBtn(true);
+            }
         } else {
             const errMsg = res?.msg || "查询无响应";
             addLog(`资格查询失败: ${errMsg}`, "error");
