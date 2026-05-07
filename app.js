@@ -25,8 +25,7 @@
         VERSION_CLICK_TIMEOUT: 1200,
         CACHED_VERSION_KEY: "APP_CACHED_VERSION",
         DRAFTS_KEY: "ORDER_DRAFTS_V1",
-        DRAFTS_TTL_MS: 7 * 24 * 60 * 60 * 1000,
-        AUTO_SAVE_DEBOUNCE_MS: 2000
+        DRAFTS_TTL_MS: 7 * 24 * 60 * 60 * 1000
     };
 
     const payStates = {
@@ -67,8 +66,8 @@
         isRemindPolling: false,
         draftsData: { version: 1, drafts: {} },
         currentDraftId: null,
-        autoSaveTimer: null,
-        isDirty: false
+        _queuedOrdersCache: null,
+        _queuedOrdersCacheDirty: true
     };
 
     const els = {};
@@ -192,6 +191,7 @@
         });
 
         saveOrderQueue();
+        invalidateQueuedOrdersCache();
     }
 
     function ensureStoreQueueBucket(storeKey) {
@@ -213,6 +213,7 @@
             lastCheckAt: meta.lastCheckAt || 0
         };
         saveOrderQueue();
+        invalidateQueuedOrdersCache();
         updateQueueBadge();
     }
 
@@ -225,10 +226,18 @@
             delete state.orderQueueByStore.stores[storeKey];
         }
         saveOrderQueue();
+        invalidateQueuedOrdersCache();
         updateQueueBadge();
     }
 
+    function invalidateQueuedOrdersCache() {
+        state._queuedOrdersCacheDirty = true;
+    }
+
     function getAllQueuedOrders() {
+        if (!state._queuedOrdersCacheDirty && state._queuedOrdersCache) {
+            return state._queuedOrdersCache;
+        }
         const list = [];
         Object.keys(state.orderQueueByStore.stores || {}).forEach(storeKey => {
             const orders = state.orderQueueByStore.stores[storeKey]?.orders || {};
@@ -240,6 +249,8 @@
                 });
             });
         });
+        state._queuedOrdersCache = list;
+        state._queuedOrdersCacheDirty = false;
         return list;
     }
 
@@ -254,7 +265,11 @@
     }
 
     function hasQueuedOrders() {
-        return getAllQueuedOrders().length > 0;
+        for (const storeKey in state.orderQueueByStore.stores) {
+            const orders = state.orderQueueByStore.stores[storeKey]?.orders;
+            if (orders && Object.keys(orders).length > 0) return true;
+        }
+        return false;
     }
 
     function generateDraftId() {
@@ -365,7 +380,6 @@
         setCurrentStoreDrafts(list);
         saveDraftsToStorage();
         state.currentDraftId = draft.id;
-        state.isDirty = false;
         addLog(`创建暂存: ${draft.label}`, "info");
         return draft;
     }
@@ -396,7 +410,6 @@
         saveDraftsToStorage();
         if (state.currentDraftId === draftId) {
             state.currentDraftId = null;
-            state.isDirty = false;
         }
         addLog(`删除暂存`, "info");
     }
@@ -405,7 +418,6 @@
         state.draftsData.drafts[getCurrentStoreKey()] = [];
         saveDraftsToStorage();
         state.currentDraftId = null;
-        state.isDirty = false;
         addLog("已清空当前门店所有暂存", "info");
     }
 
@@ -437,7 +449,6 @@
         toggleOrderInput();
 
         state.currentDraftId = draftId;
-        state.isDirty = false;
         renderDraftBar();
         updateDraftBadge();
         addLog(`已加载暂存: ${draft.label}`, "info");
@@ -584,47 +595,6 @@
         renderDraftBar();
         updateDraftBadge();
         mdui.snackbar({ message: "已删除暂存" });
-    }
-
-    function scheduleAutoSave() {
-        if (!state.currentDraftId) return;
-        state.isDirty = true;
-        renderDraftBar();
-
-        if (state.autoSaveTimer) clearTimeout(state.autoSaveTimer);
-        state.autoSaveTimer = setTimeout(() => {
-            if (state.currentDraftId && state.isDirty) {
-                updateDraft(state.currentDraftId);
-                state.isDirty = false;
-                renderDraftBar();
-                addLog("暂存已自动保存", "info");
-            }
-        }, CONSTANTS.AUTO_SAVE_DEBOUNCE_MS);
-    }
-
-    function bindAutoSaveListeners() {
-        const selectors = [
-            '#buyerMobile', '#detailAddress', '#goodsCode',
-            '#shopPrice', '#actualPrice', '#sncode'
-        ];
-        selectors.forEach(sel => {
-            const el = document.querySelector(sel);
-            if (el) el.addEventListener('input', scheduleAutoSave);
-        });
-        els.city?.addEventListener('change', scheduleAutoSave);
-        els.district?.addEventListener('change', scheduleAutoSave);
-        els.town?.addEventListener('change', scheduleAutoSave);
-        document.querySelectorAll('#productCategoryChips mdui-chip').forEach(chip => {
-            chip.addEventListener('change', scheduleAutoSave);
-        });
-    }
-
-    function bindBeforeUnload() {
-        window.addEventListener('beforeunload', () => {
-            if (state.currentDraftId && state.isDirty) {
-                updateDraft(state.currentDraftId);
-            }
-        });
     }
 
     function makePushSentKey(storeKey, orderNumber, tag = "PAID") {
@@ -990,7 +960,7 @@
             saveBtn.size = 'small';
             saveBtn.innerText = '保存';
             saveBtn.dataset.key = key;
-            saveBtn.dataset.input = valueInput;
+            saveBtn.dataset.action = 'save';
 
             const delBtn = document.createElement('mdui-button');
             delBtn.variant = 'text';
@@ -998,6 +968,7 @@
             delBtn.style.color = 'rgb(var(--mdui-color-error))';
             delBtn.innerText = '删除';
             delBtn.dataset.key = key;
+            delBtn.dataset.action = 'delete';
 
             btnRow.appendChild(delBtn);
             btnRow.appendChild(saveBtn);
@@ -1028,12 +999,18 @@
     }
 
     function clearAllLs() {
-        if (confirm('警告：将清空当前域下所有 LocalStorage 数据，包含配置和缓存等，不可恢复！确定吗？')) {
-            localStorage.clear();
-            refreshLsEditor();
-            addLog("已清空所有 LocalStorage 数据", "warn");
-            mdui.snackbar({ message: 'LocalStorage 已清空，建议刷新页面' });
-        }
+        mdui.confirm({
+            headline: "警告",
+            description: "将清空当前域下所有 LocalStorage 数据，包含配置和缓存等，不可恢复！确定吗？",
+            confirmText: "确定清空",
+            cancelText: "取消",
+            onConfirm: () => {
+                localStorage.clear();
+                refreshLsEditor();
+                addLog("已清空所有 LocalStorage 数据", "warn");
+                mdui.snackbar({ message: 'LocalStorage 已清空，建议刷新页面' });
+            }
+        });
     }
 
     function handleVersionClick() {
@@ -1256,7 +1233,6 @@
         els.shopSwitchMenu.classList.remove('open');
         if (index === state.currentStoreIndex) return;
         state.currentDraftId = null;
-        state.isDirty = false;
         setCurrentStoreIndex(index, true);
         renderDraftBar();
         updateDraftBadge();
@@ -2365,7 +2341,6 @@
             }
 
             calcPrice();
-            scheduleAutoSave();
         } else {
             addLog(`商品[${code}]查询失败`, "error");
             showError(`商品查询失败: ${res?.msg}`);
@@ -2677,7 +2652,6 @@
         if (detail) {
             document.querySelector('#detailAddress').value = detail;
         }
-        scheduleAutoSave();
     }
 
     function regexSmartParse(raw) {
@@ -2700,26 +2674,29 @@
 
         let matched = { city: "", dist: "", townCode: "", townName: "" };
 
-        const townCandidates = [];
+        const textIndex = {};
         for (const cKey in state.regionTree) {
             for (const dKey in state.regionTree[cKey]) {
                 const towns = state.regionTree[cKey][dKey] || [];
                 for (const t of towns) {
-                    if (t?.text && raw.includes(t.text)) {
-                        let score = 10;
-                        if (raw.includes(dKey)) score += 6;
-                        else if (hasToken(raw, dKey)) score += 4;
-                        if (raw.includes(cKey)) score += 3;
-                        else if (hasToken(raw, cKey)) score += 2;
+                    const text = t?.text;
+                    if (!text) continue;
+                    if (!textIndex[text]) textIndex[text] = [];
+                    textIndex[text].push({ city: cKey, dist: dKey, townCode: t.value, townName: text });
+                }
+            }
+        }
 
-                        townCandidates.push({
-                            city: cKey,
-                            dist: dKey,
-                            townCode: t.value,
-                            townName: t.text,
-                            score
-                        });
-                    }
+        const townCandidates = [];
+        for (const townText in textIndex) {
+            if (raw.includes(townText)) {
+                for (const loc of textIndex[townText]) {
+                    let score = 10;
+                    if (raw.includes(loc.dist)) score += 6;
+                    else if (hasToken(raw, loc.dist)) score += 4;
+                    if (raw.includes(loc.city)) score += 3;
+                    else if (hasToken(raw, loc.city)) score += 2;
+                    townCandidates.push({ ...loc, score });
                 }
             }
         }
@@ -2797,7 +2774,6 @@
             .trim();
 
         document.querySelector('#detailAddress').value = addr;
-        scheduleAutoSave();
     }
 
     function bindEventListeners() {
@@ -2960,38 +2936,37 @@
         });
 
         document.getElementById('lsItemList').addEventListener('click', (e) => {
-            const saveBtn = e.target.closest('mdui-button');
-            const delBtn = e.target.closest('mdui-button');
+            const btn = e.target.closest('mdui-button[data-action]');
+            if (!btn) return;
 
-            if (saveBtn && saveBtn.innerText === '保存') {
-                const container = saveBtn.closest('div[style*="flex-direction: column"]');
-                const keyLabel = container?.querySelector('div[style*="font-weight: bold"]');
+            const action = btn.dataset.action;
+            const key = btn.dataset.key;
+            if (!key) return;
+
+            if (action === 'save') {
+                const container = btn.closest('div[style*="flex-direction: column"]');
                 const input = container?.querySelector('mdui-text-field');
-
-                if (keyLabel && input) {
-                    const key = keyLabel.innerText.replace('Key: ', '');
+                if (input) {
                     try {
                         localStorage.setItem(key, input.value);
                         mdui.snackbar({ message: `已保存修改 [${key}]` });
                         addLog(`更新 Storage Key: ${key}`, "info");
                     } catch (err) {
-                        alert('保存失败: ' + err.message);
+                        mdui.alert({ headline: "保存失败", description: err.message, confirmText: "确定" });
                     }
                 }
-            }
-
-            if (delBtn && delBtn.innerText === '删除') {
-                const container = delBtn.closest('div[style*="flex-direction: column"]');
-                const keyLabel = container?.querySelector('div[style*="font-weight: bold"]');
-
-                if (keyLabel) {
-                    const key = keyLabel.innerText.replace('Key: ', '');
-                    if (confirm(`确定删除数据项 [${key}] 吗？`)) {
+            } else if (action === 'delete') {
+                mdui.confirm({
+                    headline: "删除确认",
+                    description: `确定删除数据项 [${key}] 吗？`,
+                    confirmText: "确定删除",
+                    cancelText: "取消",
+                    onConfirm: () => {
                         localStorage.removeItem(key);
                         refreshLsEditor();
                         addLog(`删除 Storage Key: ${key}`, "warn");
                     }
-                }
+                });
             }
         });
 
@@ -3009,17 +2984,20 @@
             }
         });
         document.getElementById('draftDrawerClearAll')?.addEventListener('click', () => {
-            if (confirm('确定清空当前门店所有暂存订单吗？此操作不可撤销。')) {
-                clearCurrentStoreDrafts();
-                renderDraftDrawerList();
-                renderDraftBar();
-                updateDraftBadge();
-                mdui.snackbar({ message: "已清空所有暂存" });
-            }
+            mdui.confirm({
+                headline: "清空暂存",
+                description: "确定清空当前门店所有暂存订单吗？此操作不可撤销。",
+                confirmText: "确定清空",
+                cancelText: "取消",
+                onConfirm: () => {
+                    clearCurrentStoreDrafts();
+                    renderDraftDrawerList();
+                    renderDraftBar();
+                    updateDraftBadge();
+                    mdui.snackbar({ message: "已清空所有暂存" });
+                }
+            });
         });
-
-        bindAutoSaveListeners();
-        bindBeforeUnload();
     }
 
     function init() {
