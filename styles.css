@@ -211,7 +211,11 @@ mdui-select {
     position: fixed;
     bottom: 24px;
     right: 24px;
-    z-index: 1000;
+    z-index: 1001;
+}
+
+mdui-snackbar {
+    --z-index: 1000;
 }
 
 #orderDrawer {

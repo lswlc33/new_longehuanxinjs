@@ -2444,6 +2444,10 @@
 
         const actualGoodsName = document.querySelector('#goodsCode').dataset.goodsName || "";
 
+        if (!mobile || !goodsCode || !shopPrice || !city || !district || !townCode || !actualGoodsName) {
+            return showError("请填写完整订单信息（注意确认商品查询成功及乡镇地址）");
+        }
+
         let shopOrderNum = document.querySelector('#shopOrderNumber').value;
         if (document.querySelector('#autoOrderNumCheckbox').checked) {
             try {
@@ -2460,10 +2464,6 @@
         else if (state.regionTree[city]?.[district]) {
             const t = state.regionTree[city][district].find(x => x.value == townCode);
             if (t) townName = t.text;
-        }
-
-        if (!mobile || !shopOrderNum || !goodsCode || !shopPrice || !city || !district || !townCode || !actualGoodsName) {
-            return showError("请填写完整订单信息（注意确认商品查询成功及乡镇地址）");
         }
 
         const addressStr = `${city}-${district}-${townName}-${detailAddr}`;
