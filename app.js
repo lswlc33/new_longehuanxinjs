@@ -114,6 +114,12 @@
         return String(text).replace(/[&<>"']/g, (char) => escapeMap[char]);
     }
 
+    function showSnackbar(opts) {
+        if (typeof opts === 'string') opts = { message: opts };
+        opts.placement = opts.placement || 'bottom-start';
+        return mdui.snackbar(opts);
+    }
+
     function getCurrentStoreKey() {
         return `store_${state.currentStoreIndex}`;
     }
@@ -498,10 +504,10 @@
 
     function saveCurrentAsDraft() {
         if (!isFormHasContent()) {
-            return mdui.snackbar({ message: "表单为空，请先填写内容" });
+            return showSnackbar({ message: "表单为空，请先填写内容" });
         }
         const draft = createDraft();
-        mdui.snackbar({ message: `已暂存: ${draft.label}` });
+        showSnackbar({ message: `已暂存: ${draft.label}` });
         renderDraftBar();
         updateDraftBadge();
     }
@@ -586,7 +592,7 @@
         await loadDraftToForm(draftId);
         const drawer = document.getElementById('draftDrawer');
         if (drawer) drawer.open = false;
-        mdui.snackbar({ message: "已加载暂存订单" });
+        showSnackbar({ message: "已加载暂存订单" });
     }
 
     function handleDraftDelete(draftId) {
@@ -594,7 +600,7 @@
         renderDraftDrawerList();
         renderDraftBar();
         updateDraftBadge();
-        mdui.snackbar({ message: "已删除暂存" });
+        showSnackbar({ message: "已删除暂存" });
     }
 
     function makePushSentKey(storeKey, orderNumber, tag = "PAID") {
@@ -854,9 +860,9 @@
             const configStr = JSON.stringify(configData);
             await navigator.clipboard.writeText(configStr);
 
-            mdui.snackbar({
+            showSnackbar({
                 message: "配置已复制到剪贴板！",
-                placement: "top"
+                placement: "top-start"
             });
             addLog("执行导出配置：数据已写入剪贴板", "info");
         } catch (err) {
@@ -878,7 +884,7 @@
         const input = inputField.value.trim();
 
         if (!input) {
-            mdui.snackbar({ message: "请输入配置内容" });
+            showSnackbar({ message: "请输入配置内容" });
             return;
         }
 
@@ -985,11 +991,11 @@
         const input = document.getElementById('newLsKey');
         const key = input.value.trim();
         if (!key) {
-            mdui.snackbar({ message: "Key 不能为空" });
+            showSnackbar({ message: "Key 不能为空" });
             return;
         }
         if (localStorage.getItem(key) !== null) {
-            mdui.snackbar({ message: "该 Key 已存在，请在下方列表中修改" });
+            showSnackbar({ message: "该 Key 已存在，请在下方列表中修改" });
             return;
         }
         localStorage.setItem(key, '');
@@ -1008,7 +1014,7 @@
                 localStorage.clear();
                 refreshLsEditor();
                 addLog("已清空所有 LocalStorage 数据", "warn");
-                mdui.snackbar({ message: 'LocalStorage 已清空，建议刷新页面' });
+                showSnackbar({ message: 'LocalStorage 已清空，建议刷新页面' });
             }
         });
     }
@@ -1186,7 +1192,7 @@
         syncPayloadsFromInputs();
 
         if (state.storePayloads.length <= 1) {
-            mdui.snackbar({ message: "至少需要保留一个门店配置" });
+            showSnackbar({ message: "至少需要保留一个门店配置" });
             return;
         }
 
@@ -1236,7 +1242,7 @@
         setCurrentStoreIndex(index, true);
         renderDraftBar();
         updateDraftBadge();
-        mdui.snackbar({ message: `正在切换到 ${getStoreDisplayName(state.storePayloads[index], index)}` });
+        showSnackbar({ message: `正在切换到 ${getStoreDisplayName(state.storePayloads[index], index)}` });
     }
 
     async function requestTokenByPayload(rawPayload) {
@@ -1276,11 +1282,11 @@
         const payloadText = store?.payload?.trim();
 
         if (!payloadText) {
-            return mdui.snackbar({ message: `门店${index + 1} 的 Payload 不能为空` });
+            return showSnackbar({ message: `门店${index + 1} 的 Payload 不能为空` });
         }
 
         addLog(`正在验证门店${index + 1} 的Payload...`, "info");
-        mdui.snackbar({ message: `正在验证 ${store.name || `门店${index + 1}`}` });
+        showSnackbar({ message: `正在验证 ${store.name || `门店${index + 1}`}` });
         const tokenRes = await requestTokenByPayload(payloadText);
 
         if (!(tokenRes?.code === 0 && tokenRes.data)) {
@@ -1299,7 +1305,7 @@
             renderPayloadInputs();
             renderShopSwitchMenu();
             updateShopNameDisplay();
-            mdui.snackbar({ message: `验证成功：${shopName}` });
+            showSnackbar({ message: `验证成功：${shopName}` });
         } else {
             addLog(`验证失败: ${shopRes?.msg || '无法解析门店信息'}`, "error");
             showError(`验证失败：${shopRes?.msg || '门店信息获取失败'}`);
@@ -1373,11 +1379,11 @@
                 addLog("钉钉推送成功响应", "info");
             } else {
                 addLog(`钉钉推送返回错误: ${resData.errmsg || resData.msg}`, "error");
-                mdui.snackbar({ message: "钉钉推送失败: " + (resData.errmsg || resData.msg || "未知错误") });
+                showSnackbar({ message: "钉钉推送失败: " + (resData.errmsg || resData.msg || "未知错误") });
             }
         } catch (error) {
             addLog("钉钉推送网络异常: " + error.message, "error");
-            mdui.snackbar({ message: "钉钉推送异常，请检查后端服务" });
+            showSnackbar({ message: "钉钉推送异常，请检查后端服务" });
         }
     }
 
@@ -1385,11 +1391,11 @@
         const webhookUrl = els.dingWebhookInput.value.trim();
         const secretVal = els.dingSecretInput.value.trim();
         if (!webhookUrl) {
-            return mdui.snackbar({ message: "请先填写钉钉 Webhook 地址！" });
+            return showSnackbar({ message: "请先填写钉钉 Webhook 地址！" });
         }
         const testMsg = "测试消息：您已成功配置钉钉推送！\n\n张三 13800138000\n江苏省-常州市-武进区-南夏墅街道 城市大厦A座\n12345678\n测试商品\n0.01";
         await sendDingTalkMessage(testMsg, webhookUrl, secretVal);
-        mdui.snackbar({ message: "测试推送请求已发送" });
+        showSnackbar({ message: "测试推送请求已发送" });
     }
 
     const isAndroid = /Android/i.test(navigator.userAgent);
@@ -1400,10 +1406,10 @@
             const options = { body, icon: 'https://unpkg.com/mdui@2/icons/store.svg' };
             if (isAndroid && navigator.serviceWorker && navigator.serviceWorker.controller) {
                 navigator.serviceWorker.ready.then(reg => reg.showNotification(title, options)).catch(() => {
-                    mdui.snackbar({ message: `${title}\n${body}` });
+                    showSnackbar({ message: `${title}\n${body}` });
                 });
             } else if (isAndroid) {
-                mdui.snackbar({ message: `${title}\n${body}` });
+                showSnackbar({ message: `${title}\n${body}` });
             } else {
                 new Notification(title, options);
             }
@@ -1509,7 +1515,7 @@
             if (newState === 2 && !isOrderPushed(storeKey, orderNumber, "PAID")) {
                 if (els.qrDialog.open && state.currentQrOrderNumber === orderNumber) {
                     els.qrDialog.open = false;
-                    mdui.snackbar({ message: "付款成功！" });
+                    showSnackbar({ message: "付款成功！" });
                 }
 
                 addLog(`订单[${orderNumber}]支付完成，准备发起推送`, "info");
@@ -1618,7 +1624,7 @@
 
         const validPayloads = state.storePayloads.filter(item => item.payload && item.payload.trim());
         if (!validPayloads.length) {
-            return mdui.snackbar({ message: "请至少填写一个 Payload" });
+            return showSnackbar({ message: "请至少填写一个 Payload" });
         }
 
         state.storePayloads = state.storePayloads.map((item, idx) => ({
@@ -1652,7 +1658,7 @@
         renderPayloadInputs();
         renderShopSwitchMenu();
         closeConfigDialog();
-        mdui.snackbar({ message: "配置已保存，正在重连..." });
+        showSnackbar({ message: "配置已保存，正在重连..." });
         autoLogin();
     }
 
@@ -1853,7 +1859,7 @@
     }
 
     async function viewOrderDetail(orderNumber) {
-        if (!orderNumber) return mdui.snackbar({ message: "无效订单号" });
+        if (!orderNumber) return showSnackbar({ message: "无效订单号" });
 
         const dialog = els.detailDialog;
         const detailPushBtn = document.getElementById('detailPushBtn');
@@ -2035,7 +2041,7 @@
 
         els.detailDialog.open = false;
         document.getElementById('orderDrawer').open = false;
-        mdui.snackbar({ message: "已填入订单信息" });
+        showSnackbar({ message: "已填入订单信息" });
     }
 
     async function cancelOrder() {
@@ -2045,7 +2051,7 @@
         const res = await callApi('/salesuser/cancelWxMiniOrder', 'POST', { shopOrderNumber: state.orderToCancel });
         if (res?.code === 0) {
             addLog("订单取消成功", "info");
-            mdui.snackbar({ message: "订单取消成功！" });
+            showSnackbar({ message: "订单取消成功！" });
             fetchOrders();
         } else {
             addLog(`订单取消失败: ${res?.msg}`, "error");
@@ -2074,7 +2080,7 @@
 
         if (res?.code === 0) {
             addLog("退款请求已接受", "info");
-            mdui.snackbar({ message: "退款成功", placement: "top" });
+            showSnackbar({ message: "退款成功", placement: "top-start" });
             fetchOrders();
         } else {
             addLog(`退款请求失败: ${res?.msg}`, "error");
@@ -2090,7 +2096,7 @@
 
     function openDetailPushDialog() {
         if (!state.orderToPush) {
-            return mdui.snackbar({ message: "当前订单不支持补推送" });
+            return showSnackbar({ message: "当前订单不支持补推送" });
         }
         els.detailDialog.open = false;
         setTimeout(() => {
@@ -2108,19 +2114,19 @@
 
         if (!state.orderToPush) return;
         if (!pushMobile) {
-            return mdui.snackbar({ message: "手机号不能为空" });
+            return showSnackbar({ message: "手机号不能为空" });
         }
         if (pushMobile.includes('*')) {
-            return mdui.snackbar({ message: "手机号不能包含*号" });
+            return showSnackbar({ message: "手机号不能包含*号" });
         }
         if (!/^1[3-9]\d{9}$/.test(pushMobile)) {
-            return mdui.snackbar({ message: "请输入正确的手机号" });
+            return showSnackbar({ message: "请输入正确的手机号" });
         }
 
         addLog(`手动补发推送: ${state.orderToPush.shopOrderNumber} -> ${pushMobile}`, "info");
         const msg = buildDingTalkOrderMessage(state.orderToPush, pushMobile);
         await sendDingTalkMessage(msg);
-        mdui.snackbar({ message: "推送请求已发送", placement: "top" });
+        showSnackbar({ message: "推送请求已发送", placement: "top-start" });
 
         const storeKey = state.orderToPush._storeKey || getCurrentStoreKey();
         const orderNumber = state.orderToPush.ccbPayOrderNumber;
@@ -2140,7 +2146,7 @@
     }
 
     function openQrDialog(ccbOrderNum) {
-        if (!ccbOrderNum) return mdui.snackbar({ message: "无效的订单号" });
+        if (!ccbOrderNum) return showSnackbar({ message: "无效的订单号" });
         state.currentQrOrderNumber = ccbOrderNum;
         els.qrDialog.open = true;
         loadQrCode();
@@ -2169,13 +2175,13 @@
             els.qrImage.style.display = 'block';
         } else {
             addLog(`获取二维码失败: ${res?.msg}`, "error");
-            mdui.snackbar({ message: res?.msg || "获取二维码失败" });
+            showSnackbar({ message: res?.msg || "获取二维码失败" });
         }
     }
 
     async function copyQrImage() {
         const src = els.qrImage.src;
-        if (!src || els.qrImage.style.display === 'none') return mdui.snackbar({ message: "二维码未加载" });
+        if (!src || els.qrImage.style.display === 'none') return showSnackbar({ message: "二维码未加载" });
 
         try {
             const response = await fetch(src);
@@ -2183,10 +2189,10 @@
             await navigator.clipboard.write([
                 new ClipboardItem({ [blob.type]: blob })
             ]);
-            mdui.snackbar({ message: "二维码图片已复制" });
+            showSnackbar({ message: "二维码图片已复制" });
         } catch (err) {
             console.error(err);
-            mdui.snackbar({ message: "复制失败，请手动长按保存" });
+            showSnackbar({ message: "复制失败，请手动长按保存" });
         }
     }
 
@@ -2233,11 +2239,11 @@
             sortSelectedChipsToTop();
 
             if (validCodes.length > 0) {
-                mdui.snackbar({ message: `查询成功`, closeable: true });
+                showSnackbar({ message: `查询成功`, closeable: true });
                 stopRemindPolling();
                 showRemindBtn(false);
             } else {
-                mdui.snackbar({ message: `查询成功，尚未领取品类资格`, closeable: true });
+                showSnackbar({ message: `查询成功，尚未领取品类资格`, closeable: true });
                 chips.forEach(c => c.selected = false);
                 showRemindBtn(true);
             }
@@ -2444,7 +2450,7 @@
         let shopOrderNum = document.querySelector('#shopOrderNumber').value;
         if (document.querySelector('#autoOrderNumCheckbox').checked) {
             try {
-                mdui.snackbar({ message: "正在获取最新单号..." });
+                showSnackbar({ message: "正在获取最新单号..." });
                 shopOrderNum = await generateNextOrderNumber();
             } catch (e) {
                 return showError("自动获取单号失败");
@@ -2489,7 +2495,7 @@
         const res = await callApi('/salesuser/addOrder', 'POST', payload);
         if (res?.code === 0) {
             addLog(`下单成功: 建行单号为 ${res.data}`, "info");
-            mdui.snackbar({ message: "订单提交成功！" });
+            showSnackbar({ message: "订单提交成功！" });
             if (res.data) {
                 openQrDialog(res.data);
 
@@ -2517,8 +2523,8 @@
 
     async function smartParse() {
         const raw = document.querySelector('#smartInput').value;
-        if (!raw.trim()) return mdui.snackbar({ message: "请先输入文本" });
-        if (!Object.keys(state.regionTree).length) return mdui.snackbar({ message: "地址库未加载" });
+        if (!raw.trim()) return showSnackbar({ message: "请先输入文本" });
+        if (!Object.keys(state.regionTree).length) return showSnackbar({ message: "地址库未加载" });
 
         if (state.aiEnable && state.aiEndpoint && state.aiModel && state.aiKey) {
             await aiSmartParse(raw);
@@ -2529,7 +2535,7 @@
 
     async function aiSmartParse(raw) {
         addLog("使用 AI 大模型进行地址智能解析...", "info");
-        const loadingSnackbar = mdui.snackbar({ message: "AI 正在识别...", placement: "top", duration: 0 });
+        const loadingSnackbar = showSnackbar({ message: "AI 正在识别...", placement: "top-start", duration: 0 });
 
         try {
             const systemPrompt = `你是一个地址解析助手。请从用户输入的文本中提取出手机号、城市、区县、乡镇/街道、详细地址。
@@ -2578,13 +2584,13 @@
             const result = JSON.parse(jsonStr);
 
             if (loadingSnackbar) loadingSnackbar.open = false;
-            mdui.snackbar({ message: "AI 识别成功" });
+            showSnackbar({ message: "AI 识别成功" });
             applyParsedAddress(result);
 
         } catch (e) {
             if (loadingSnackbar) loadingSnackbar.open = false;
             addLog(`AI 解析异常: ${e.message}`, "error");
-            mdui.snackbar({ message: `AI 解析失败，降级使用常规解析` });
+            showSnackbar({ message: `AI 解析失败，降级使用常规解析` });
             regexSmartParse(raw);
         }
     }
@@ -2653,7 +2659,7 @@
                 }, 100);
             }, 50);
         } else {
-            mdui.snackbar({ message: "解析成功，但在地址库中未能精确匹配省市区" });
+            showSnackbar({ message: "解析成功，但在地址库中未能精确匹配省市区" });
         }
 
         if (detail) {
@@ -2754,7 +2760,7 @@
                 }, 100);
             }, 50);
         } else {
-            mdui.snackbar({ message: "未识别到地址信息" });
+            showSnackbar({ message: "未识别到地址信息" });
         }
 
         let addr = raw;
@@ -2956,7 +2962,7 @@
                 if (input) {
                     try {
                         localStorage.setItem(key, input.value);
-                        mdui.snackbar({ message: `已保存修改 [${key}]` });
+                        showSnackbar({ message: `已保存修改 [${key}]` });
                         addLog(`更新 Storage Key: ${key}`, "info");
                     } catch (err) {
                         mdui.alert({ headline: "保存失败", description: err.message, confirmText: "确定" });
@@ -3001,7 +3007,7 @@
                     renderDraftDrawerList();
                     renderDraftBar();
                     updateDraftBadge();
-                    mdui.snackbar({ message: "已清空所有暂存" });
+                    showSnackbar({ message: "已清空所有暂存" });
                 }
             });
         });
@@ -3033,7 +3039,7 @@
             autoLogin();
         } else {
             openConfigDialog();
-            mdui.snackbar({ message: "请先配置至少一个门店 Payload", placement: "top" });
+            showSnackbar({ message: "请先配置至少一个门店 Payload", placement: "top-start" });
         }
 
         renderShopSwitchMenu();
