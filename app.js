@@ -860,10 +860,7 @@
             const configStr = JSON.stringify(configData);
             await navigator.clipboard.writeText(configStr);
 
-            showSnackbar({
-                message: "配置已复制到剪贴板！",
-                placement: "top-start"
-            });
+            showSnackbar({ message: "配置已复制到剪贴板！" });
             addLog("执行导出配置：数据已写入剪贴板", "info");
         } catch (err) {
             showError("导出失败: " + err);
@@ -2080,7 +2077,7 @@
 
         if (res?.code === 0) {
             addLog("退款请求已接受", "info");
-            showSnackbar({ message: "退款成功", placement: "top-start" });
+            showSnackbar({ message: "退款成功" });
             fetchOrders();
         } else {
             addLog(`退款请求失败: ${res?.msg}`, "error");
@@ -2126,7 +2123,7 @@
         addLog(`手动补发推送: ${state.orderToPush.shopOrderNumber} -> ${pushMobile}`, "info");
         const msg = buildDingTalkOrderMessage(state.orderToPush, pushMobile);
         await sendDingTalkMessage(msg);
-        showSnackbar({ message: "推送请求已发送", placement: "top-start" });
+        showSnackbar({ message: "推送请求已发送" });
 
         const storeKey = state.orderToPush._storeKey || getCurrentStoreKey();
         const orderNumber = state.orderToPush.ccbPayOrderNumber;
@@ -2535,7 +2532,7 @@
 
     async function aiSmartParse(raw) {
         addLog("使用 AI 大模型进行地址智能解析...", "info");
-        const loadingSnackbar = showSnackbar({ message: "AI 正在识别...", placement: "top-start", duration: 0 });
+        const loadingSnackbar = showSnackbar({ message: "AI 正在识别...", duration: 0 });
 
         try {
             const systemPrompt = `你是一个地址解析助手。请从用户输入的文本中提取出手机号、城市、区县、乡镇/街道、详细地址。
@@ -3039,7 +3036,7 @@
             autoLogin();
         } else {
             openConfigDialog();
-            showSnackbar({ message: "请先配置至少一个门店 Payload", placement: "top-start" });
+            showSnackbar({ message: "请先配置至少一个门店 Payload" });
         }
 
         renderShopSwitchMenu();
