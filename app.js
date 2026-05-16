@@ -2507,11 +2507,6 @@
                 checkNowAndEnsurePolling("submitOrder");
             }
 
-            if (state.currentDraftId) {
-                deleteDraft(state.currentDraftId);
-                renderDraftBar();
-                updateDraftBadge();
-            }
         } else {
             addLog(`提交订单失败: ${res?.msg}`, "error");
             showError(res?.msg || "提交失败");
