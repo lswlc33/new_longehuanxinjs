@@ -433,24 +433,39 @@
         const fd = draft.formData;
 
         document.querySelector('#buyerMobile').value = fd.buyerMobile || '';
+        await new Promise(r => setTimeout(r, 200));
+
         setSelectedCategory(fd.category);
+        await new Promise(r => setTimeout(r, 150));
 
         if (fd.city && state.regionTree[fd.city]) {
             els.city.value = fd.city;
+            await new Promise(r => setTimeout(r, 150));
             populateSelect(els.district, Object.keys(state.regionTree[fd.city]), fd.district);
-            await new Promise(r => setTimeout(r, 100));
+            await new Promise(r => setTimeout(r, 200));
             const towns = state.regionTree[fd.city]?.[fd.district] || [];
             populateSelect(els.town, towns, fd.townCode);
+            await new Promise(r => setTimeout(r, 150));
         }
 
         document.querySelector('#detailAddress').value = fd.detailAddress || '';
+        await new Promise(r => setTimeout(r, 150));
+
         document.querySelector('#goodsCode').value = fd.goodsCode || '';
-        if (fd.goodsName) document.querySelector('#goodsCode').dataset.goodsName = fd.goodsName;
+        await new Promise(r => setTimeout(r, 200));
+
         document.querySelector('#filingPrice').value = fd.filingPrice || '';
+        await new Promise(r => setTimeout(r, 100));
         document.querySelector('#shopPrice').value = fd.shopPrice || '';
+        await new Promise(r => setTimeout(r, 100));
         document.querySelector('#actualPrice').value = fd.actualPrice || '';
+        await new Promise(r => setTimeout(r, 100));
         document.querySelector('#subsidyPrice').value = fd.subsidyPrice || '';
+        await new Promise(r => setTimeout(r, 100));
+
         document.querySelector('#sncode').value = fd.sncode || '';
+        await new Promise(r => setTimeout(r, 150));
+
         document.querySelector('#autoOrderNumCheckbox').checked = fd.autoOrderNum !== false;
         toggleOrderInput();
 
@@ -2530,7 +2545,7 @@
         const loadingSnackbar = showSnackbar({ message: "AI 正在识别...", duration: 0 });
 
         try {
-            const systemPrompt = `你是一个地址解析助手。请从用户输入的文本中提取出手机号、城市、区县、乡镇/街道、详细地址。
+            const systemPrompt = `你是一个地址解析助手。请从用户输入的文本中提取出手机号、城市、区县、乡镇/街道、详细地址、商品编码。
 严格返回JSON格式，不要返回任何其他说明或Markdown标记。
 必须包含以下字段：
 {
@@ -2538,7 +2553,8 @@
   "city": "地级市名称，如'常州市'，需包含市等后缀，若无则为空",
   "district": "区县名称，如'武进区'，若无则为空",
   "town": "乡镇或街道名称，如'南夏墅街道'，若无则为空",
-  "detail": "剔除上述省市区镇和手机号后的剩余详细地址,但只能是地址，不能包含其他杂乱信息"
+  "detail": "剔除上述省市区镇、手机号和商品编码后的剩余详细地址，只能是地址，不能包含其他杂乱信息",
+  "goodsCode": "商品编码，以69开头的大于等于10位的连续数字，如'6912345678901'，若无则为空字符串；如果出现多个候选，选择最长的一个"
 }`;
 
             const response = await fetch(state.aiEndpoint, {
@@ -2588,7 +2604,7 @@
     }
 
     function applyParsedAddress(parsed) {
-        let { mobile, city, district, town, detail } = parsed;
+        let { mobile, city, district, town, detail, goodsCode } = parsed;
 
         if (mobile && /^1[3-9]\d{9}$/.test(mobile)) {
             document.querySelector('#buyerMobile').value = mobile;
@@ -2657,6 +2673,13 @@
         if (detail) {
             document.querySelector('#detailAddress').value = detail;
         }
+
+        if (goodsCode && /^69\d{8,}$/.test(goodsCode)) {
+            document.querySelector('#goodsCode').value = goodsCode;
+            if (state.currentToken) {
+                setTimeout(() => queryGoodsInfo(), 100);
+            }
+        }
     }
 
     function regexSmartParse(raw) {
@@ -2675,6 +2698,16 @@
             mobile = phoneMatch[0];
             document.querySelector('#buyerMobile').value = mobile;
             checkQualification();
+        }
+
+        let goodsCode = "";
+        const goodsCodeMatch = raw.match(/69\d{8,}/);
+        if (goodsCodeMatch) {
+            goodsCode = goodsCodeMatch[0];
+            document.querySelector('#goodsCode').value = goodsCode;
+            if (state.currentToken) {
+                setTimeout(() => queryGoodsInfo(), 100);
+            }
         }
 
         let matched = { city: "", dist: "", townCode: "", townName: "" };
@@ -2757,6 +2790,7 @@
 
         let addr = raw;
         if (mobile) addr = addr.replace(new RegExp(escapeRegExp(mobile), "g"), "");
+        if (goodsCode) addr = addr.replace(new RegExp(escapeRegExp(goodsCode), "g"), "");
         if (matched.townName) addr = addr.replace(new RegExp(escapeRegExp(matched.townName), "g"), "");
         if (matched.dist) {
             addr = addr.replace(new RegExp(escapeRegExp(matched.dist), "g"), "");
