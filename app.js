@@ -452,6 +452,10 @@
         await new Promise(r => setTimeout(r, 150));
 
         document.querySelector('#goodsCode').value = fd.goodsCode || '';
+        document.querySelector('#goodsCode').dataset.goodsName = fd.goodsName || '';
+        if (fd.goodsCode && fd.goodsName) {
+            saveRecentGoods(fd.goodsCode, fd.goodsName);
+        }
         await new Promise(r => setTimeout(r, 200));
 
         document.querySelector('#filingPrice').value = fd.filingPrice || '';

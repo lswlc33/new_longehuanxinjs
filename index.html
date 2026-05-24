@@ -90,7 +90,8 @@
                     <mdui-button-icon id="closeDraftDrawerBtn" icon="arrow_back"></mdui-button-icon>
                     <span class="section-title" style="font-size: 20px;">暂存订单</span>
                 </div>
-                <mdui-button id="draftDrawerClearAll" variant="text" style="color: rgb(var(--mdui-color-error));">清空所有</mdui-button>
+                <mdui-button id="draftDrawerClearAll" variant="text"
+                    style="color: rgb(var(--mdui-color-error));">清空所有</mdui-button>
             </div>
             <div id="draftListContainer" class="order-list" style="flex:1; overflow-y:auto; padding:16px;">
             </div>
@@ -191,7 +192,9 @@
         <span slot="headline">版本更新</span>
         <div slot="description">
             <p style="margin-bottom: 8px; font-size: 13px; opacity: 0.7;">检测到新版本，以下是最近更新内容：</p>
-            <div id="changelogContent" style="white-space: pre-wrap; font-size: 13px; line-height: 1.8; max-height: 50vh; overflow-y: auto;"></div>
+            <div id="changelogContent"
+                style="white-space: pre-wrap; font-size: 13px; line-height: 1.8; max-height: 50vh; overflow-y: auto;">
+            </div>
         </div>
         <mdui-button id="closeChangelogDialogBtn" slot="action" variant="text">知道了</mdui-button>
     </mdui-dialog>
@@ -247,7 +250,8 @@
         <mdui-card variant="filled">
             <div class="section-header">
                 <span class="section-title">补贴资格申领人信息</span>
-                <mdui-button id="remindQualificationBtn" variant="tonal" class="btn-small" style="display:none;">等待领卷</mdui-button>
+                <mdui-button id="remindQualificationBtn" variant="tonal" class="btn-small"
+                    style="display:none;">等待领卷</mdui-button>
                 <mdui-button id="checkQualificationBtn" variant="tonal" class="btn-small">资格核验</mdui-button>
             </div>
             <mdui-text-field id="buyerMobile" label="手机号" variant="outlined" clearable></mdui-text-field>
