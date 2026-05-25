@@ -67,7 +67,11 @@
         draftsData: { version: 1, drafts: {} },
         currentDraftId: null,
         _queuedOrdersCache: null,
-        _queuedOrdersCacheDirty: true
+        _queuedOrdersCacheDirty: true,
+        orderCurrentPage: 1,
+        orderHasMore: false,
+        orderLoadingMore: false,
+        orderSearchResults: []
     };
 
     const els = {};
@@ -608,7 +612,10 @@
     }
 
     async function handleDraftLoad(draftId) {
+        const loadBtn = document.querySelector(`.draft-load-btn[data-draft-id="${draftId}"]`);
+        if (loadBtn) loadBtn.loading = true;
         await loadDraftToForm(draftId);
+        if (loadBtn) loadBtn.loading = false;
         const drawer = document.getElementById('draftDrawer');
         if (drawer) drawer.open = false;
         showSnackbar({ message: "已加载暂存订单" });
@@ -1783,24 +1790,39 @@
 
     function openOrderDrawer() {
         document.getElementById('orderDrawer').open = true;
-        fetchOrders(document.getElementById('orderSearchMobile').value);
+        fetchOrders();
     }
 
-    async function fetchOrders() {
+    async function fetchOrders(page = 1) {
         const container = document.getElementById('orderListContainer');
         if (!state.currentToken) {
             container.innerHTML = '<div style="padding: 20px; text-align: center; color: red;">请先获取 Token</div>';
             return;
         }
 
-        addLog("刷新订单列表...", "info");
-        container.innerHTML = '<div style="padding: 50px; text-align: center;"><mdui-circular-progress></mdui-circular-progress></div>';
+        const isFirstPage = page === 1;
+
+        if (isFirstPage) {
+            addLog("刷新订单列表...", "info");
+            container.innerHTML = '<div style="padding: 50px; text-align: center;"><mdui-circular-progress></mdui-circular-progress></div>';
+            state.orderSearchResults = [];
+            state.orderCurrentPage = 1;
+            state.orderHasMore = false;
+        } else {
+            state.orderLoadingMore = true;
+            toggleOrderLoadingIndicator(container, true);
+        }
 
         const filterVal = getSelectedOrderFilterValue();
         const searchVal = document.getElementById('orderSearchMobile').value.trim();
 
+        if (isFirstPage) {
+            state.orderLastSearchVal = searchVal;
+            state.orderLastFilterVal = filterVal;
+        }
+
         const res = await callApi('/salesuser/getSalesPayAndRefundOrderList', 'GET', {
-            buyerMobile: searchVal, pageNumber: "1", uploadFile3COrder: ""
+            buyerMobile: searchVal, pageNumber: String(page), uploadFile3COrder: ""
         });
 
         if (res?.code === 0 && res.data?.shopOrders) {
@@ -1818,20 +1840,43 @@
                 }
             }
 
-            addLog(`获取到订单共 ${orders.length} 条`, "info");
-            if (!orders.length) {
+            if (!isFirstPage) {
+                state.orderSearchResults = [...state.orderSearchResults, ...orders];
+            } else {
+                state.orderSearchResults = orders;
+            }
+
+            const totalPages = res.data.totalPages || res.data.totalPage || res.data.pageCount;
+            if (totalPages !== undefined) {
+                state.orderHasMore = page < totalPages;
+            } else {
+                state.orderHasMore = orders.length > 0;
+            }
+            state.orderCurrentPage = page;
+
+            addLog(`获取到订单共 ${state.orderSearchResults.length} 条`, "info");
+            if (!state.orderSearchResults.length) {
                 container.innerHTML = '<div style="padding: 32px; text-align: center; color: #999;">未找到相关订单</div>';
+                state.orderHasMore = false;
                 return;
             }
 
-            renderOrderList(container, orders);
+            renderOrderList(container, state.orderSearchResults, state.orderHasMore);
         } else {
-            addLog(`加载订单失败: ${res?.msg}`, "error");
-            container.innerHTML = `<div style="text-align: center; color: red;">加载失败: ${escapeHtml(res?.msg || '未知错误')}</div>`;
+            if (isFirstPage) {
+                addLog(`加载订单失败: ${res?.msg}`, "error");
+                container.innerHTML = `<div style="text-align: center; color: red;">加载失败: ${escapeHtml(res?.msg || '未知错误')}</div>`;
+            }
+            state.orderHasMore = false;
+        }
+
+        if (!isFirstPage) {
+            state.orderLoadingMore = false;
+            toggleOrderLoadingIndicator(container, false);
         }
     }
 
-    function renderOrderList(container, orders) {
+    function renderOrderList(container, orders, hasMore = false) {
         container.innerHTML = orders.map(order => {
             const statusText = payStates[order.payState] || "未知";
 
@@ -1872,6 +1917,32 @@
                 </div>
             </div>`;
         }).join('');
+
+        if (hasMore) {
+            const sentinel = document.createElement('div');
+            sentinel.id = 'orderScrollSentinel';
+            sentinel.className = 'order-scroll-sentinel';
+            sentinel.style.display = 'none';
+            sentinel.innerHTML = '<mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>加载更多...</span>';
+            container.appendChild(sentinel);
+        }
+    }
+
+    function toggleOrderLoadingIndicator(container, show) {
+        const sentinel = document.getElementById('orderScrollSentinel');
+        if (sentinel) {
+            sentinel.style.display = show ? '' : 'none';
+        }
+    }
+
+    function handleOrderListScroll() {
+        const container = document.getElementById('orderListContainer');
+        if (!container || state.orderLoadingMore || !state.orderHasMore) return;
+
+        const scrollBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+        if (scrollBottom < 200) {
+            fetchOrders(state.orderCurrentPage + 1);
+        }
     }
 
     async function viewOrderDetail(orderNumber) {
@@ -2977,6 +3048,8 @@
                 viewOrderDetail(orderNumber);
             }
         });
+
+        document.getElementById('orderListContainer').addEventListener('scroll', handleOrderListScroll);
 
         document.getElementById('lsItemList').addEventListener('click', (e) => {
             const btn = e.target.closest('mdui-button[data-action]');

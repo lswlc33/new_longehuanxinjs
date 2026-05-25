@@ -806,3 +806,13 @@ mdui-snackbar {
     display: flex;
     gap: 4px;
 }
+
+.order-scroll-sentinel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 16px;
+    color: rgb(var(--mdui-color-outline));
+    font-size: 13px;
+}
