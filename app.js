@@ -2422,34 +2422,43 @@
 
     async function queryGoodsInfo() {
         const code = document.querySelector('#goodsCode').value;
-        if (!code || !state.currentToken) return;
+        if (!code || !state.currentToken) {
+            _pendingGoodsQuery = null;
+            return;
+        }
 
         addLog(`查询商品信息: ${code}`, "info");
-        const res = await callApi('/salesuser/queryGoodsInfo', 'GET', { goodsCode: code, uniscid: "" });
-        if (res?.code === 0 && res.data) {
-            document.querySelector('#goodsCode').dataset.goodsName = res.data.goodsName;
-            saveRecentGoods(code, res.data.goodsName);
-            document.querySelector('#filingPrice').value = res.data.subsidyBackPrice;
+        _pendingGoodsQuery = callApi('/salesuser/queryGoodsInfo', 'GET', { goodsCode: code, uniscid: "" });
+        try {
+            const res = await _pendingGoodsQuery;
+            if (res?.code === 0 && res.data) {
+                document.querySelector('#goodsCode').dataset.goodsName = res.data.goodsName;
+                saveRecentGoods(code, res.data.goodsName);
+                document.querySelector('#filingPrice').value = res.data.subsidyBackPrice;
 
-            const price = parseFloat(res.data.subsidyBackPrice);
-            if (price > 10000) {
-                const maxFloat = Math.min(price - 10000, 1000);
-                const float = Math.floor(Math.random() * (maxFloat + 1));
-                document.querySelector('#shopPrice').value = formatPrice(10000 + float);
+                const price = parseFloat(res.data.subsidyBackPrice);
+                if (price > 10000) {
+                    const maxFloat = Math.min(price - 10000, 1000);
+                    const float = Math.floor(Math.random() * (maxFloat + 1));
+                    document.querySelector('#shopPrice').value = formatPrice(10000 + float);
+                } else {
+                    document.querySelector('#shopPrice').value = res.data.subsidyBackPrice;
+                }
+
+                calcPrice();
             } else {
-                document.querySelector('#shopPrice').value = res.data.subsidyBackPrice;
+                addLog(`商品[${code}]查询失败`, "error");
+                showError(`商品查询失败: ${res?.msg}`);
+                document.querySelector('#goodsCode').dataset.goodsName = "";
+                renderRecentGoodsSelect("");
             }
-
-            calcPrice();
-        } else {
-            addLog(`商品[${code}]查询失败`, "error");
-            showError(`商品查询失败: ${res?.msg}`);
-            document.querySelector('#goodsCode').dataset.goodsName = "";
-            renderRecentGoodsSelect("");
+        } finally {
+            _pendingGoodsQuery = null;
         }
     }
 
     let _calcGuard = false;
+    let _pendingGoodsQuery = null;
 
     function formatPrice(v) {
         const n = Math.round(v * 100) / 100;
@@ -2520,6 +2529,11 @@
         }
 
         if (!state.currentToken) return showError("Token 未就绪");
+
+        if (_pendingGoodsQuery) {
+            addLog("等待商品信息查询完成...", "info");
+            await _pendingGoodsQuery;
+        }
 
         addLog("开始收集表单并提交订单...", "info");
         const mobile = document.querySelector('#buyerMobile').value;
