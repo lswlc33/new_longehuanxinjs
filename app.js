@@ -2532,7 +2532,7 @@
 
         if (_pendingGoodsQuery) {
             addLog("等待商品信息查询完成...", "info");
-            await _pendingGoodsQuery;
+            try { await _pendingGoodsQuery; } catch (_) { /* 查询异常已在 queryGoodsInfo 中处理 */ }
         }
 
         addLog("开始收集表单并提交订单...", "info");
