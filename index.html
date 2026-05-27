@@ -302,6 +302,7 @@
         <mdui-card variant="filled">
             <div class="section-header">
                 <span class="section-title">商品信息</span>
+                <mdui-button id="openProductSearchBtn" variant="tonal" class="btn-small" icon="search">查找商品</mdui-button>
             </div>
             <mdui-text-field id="goodsCode" label="商品编号" variant="outlined" clearable></mdui-text-field>
             <mdui-select id="goodsName" label="商品名称 (可点选最近记录)" placeholder="自动计算" variant="outlined"></mdui-select>
@@ -362,6 +363,54 @@
     </mdui-dialog>
 
     <script src="app.js"></script>
+
+    <mdui-dialog id="productSearchDialog" close-on-overlay-click>
+        <span slot="headline">商品查找与导入</span>
+        <div slot="description"
+            style="display:flex; flex-direction:column; gap:10px; overflow-y:auto;">
+
+            <div id="psSheetChips"
+                style="display:none; flex-wrap:wrap; gap:6px;"></div>
+
+            <mdui-text-field id="psSearchInput" label="输入型号/名称模糊搜索" variant="outlined"
+                icon="search" clearable disabled placeholder="请先加载 Excel 文件"
+                style="display:none;">
+            </mdui-text-field>
+
+            <div id="psSearchStatus"
+                style="display:none; font-size:11px; color:rgb(var(--mdui-color-outline));">
+                共 <b id="psTotalCount">0</b> 条，匹配 <b id="psMatchCount" style="color:rgb(var(--mdui-color-primary));">0</b> 条
+            </div>
+
+            <div id="psResultsList"
+                style="max-height:340px; overflow-y:auto; border-radius:10px; border:1px solid rgba(var(--mdui-color-outline),0.12);"></div>
+
+            <div id="psDropZone"
+                style="border:2px dashed rgba(var(--mdui-color-outline),0.3); border-radius:12px; padding:28px 16px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;">
+                <mdui-icon name="cloud_upload"
+                    style="font-size:36px; opacity:0.4; display:block; margin:0 auto 6px;">
+                </mdui-icon>
+                <div style="font-size:14px; font-weight:500; margin-bottom:2px;">拖拽 Excel 文件到此处</div>
+                <div style="font-size:11px; color:rgb(var(--mdui-color-outline)); margin-bottom:10px;">
+                    支持 .xlsx / .xls，多工作表自动识别
+                </div>
+                <input type="file" id="psFileInput" accept=".xlsx,.xls"
+                    style="display:none;">
+                <mdui-button id="psBrowseBtn" variant="outlined" icon="folder_open" size="small">选择文件</mdui-button>
+            </div>
+
+            <div id="psBottomBar"
+                style="display:none; align-items:center; justify-content:space-between; font-size:11px; color:rgb(var(--mdui-color-outline)); padding-top:2px;">
+                <span style="display:flex; align-items:center; gap:4px; overflow:hidden;">
+                    <mdui-icon name="description" style="font-size:14px; flex-shrink:0;"></mdui-icon>
+                    <span id="psFileName" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+                </span>
+                <mdui-button id="psChangeFileBtn" variant="text" size="small" icon="folder_open" style="flex-shrink:0; font-size:11px;">更换文件</mdui-button>
+            </div>
+        </div>
+        <mdui-button id="psCloseBtn" slot="action" variant="text">关闭</mdui-button>
+    </mdui-dialog>
+
 </body>
 
 </html>
