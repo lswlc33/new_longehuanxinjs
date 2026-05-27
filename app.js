@@ -3319,12 +3319,30 @@
         let searchTimer = null;
         function doSearch(q) {
             if (!q || !currentItems.length) { renderResults(currentItems.slice(0, 30)); return; }
+
+            const tokens = q.trim().split(/\s+/).filter(Boolean);
+            if (!tokens.length) { renderResults(currentItems.slice(0, 30)); return; }
+
             if (fuseInstance) {
-                renderResults(fuseInstance.search(q).map(r => r.item));
+                if (tokens.length === 1) {
+                    renderResults(fuseInstance.search(tokens[0]).map(r => r.item));
+                } else {
+                    const resultsPerToken = tokens.map(t =>
+                        new Set(fuseInstance.search(t).map(r => r.item))
+                    );
+                    const intersection = [...resultsPerToken[0]].filter(item =>
+                        resultsPerToken.slice(1).every(s => s.has(item))
+                    );
+                    renderResults(intersection);
+                }
             } else {
-                const lq = q.toLowerCase();
-                renderResults(currentItems.filter(item =>
-                    Object.values(item).some(v => String(v || '').toLowerCase().includes(lq))));
+                const matched = currentItems.filter(item =>
+                    tokens.every(tok => {
+                        const lt = tok.toLowerCase();
+                        return Object.values(item).some(v => String(v || '').toLowerCase().includes(lt));
+                    })
+                );
+                renderResults(matched);
             }
         }
 
