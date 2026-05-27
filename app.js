@@ -15,6 +15,7 @@
         AI_ENDPOINT_KEY: "AI_PARSE_ENDPOINT",
         AI_MODEL_KEY: "AI_PARSE_MODEL",
         AI_KEY_KEY: "AI_PARSE_KEY",
+        PRODUCT_POOL_KEY: "PRODUCT_POOL_PATH",
         ORDER_QUEUE_KEY: "ORDER_QUEUE_BY_STORE_V1",
         ORDER_PUSH_SENT_KEY: "ORDER_PUSH_SENT_V1",
         ORDER_POLL_INTERVAL_MS: 5000,
@@ -45,6 +46,7 @@
         aiEndpoint: "",
         aiModel: "",
         aiKey: "",
+        productPoolPath: "",
         currentToken: "",
         orderToCancel: "",
         orderToRefund: "",
@@ -1634,6 +1636,7 @@
         document.getElementById('configAiEndpoint').value = state.aiEndpoint;
         document.getElementById('configAiModel').value = state.aiModel;
         document.getElementById('configAiKey').value = state.aiKey;
+        document.getElementById('configProductPool').value = state.productPoolPath;
 
         els.configDialog.open = true;
     }
@@ -1667,6 +1670,7 @@
         state.aiEndpoint = document.getElementById('configAiEndpoint').value.trim();
         state.aiModel = document.getElementById('configAiModel').value.trim();
         state.aiKey = document.getElementById('configAiKey').value.trim();
+        state.productPoolPath = document.getElementById('configProductPool').value.trim();
 
         addLog("用户保存配置并尝试重连", "info");
         persistStorePayloads();
@@ -1677,6 +1681,7 @@
         localStorage.setItem(CONSTANTS.AI_ENDPOINT_KEY, state.aiEndpoint);
         localStorage.setItem(CONSTANTS.AI_MODEL_KEY, state.aiModel);
         localStorage.setItem(CONSTANTS.AI_KEY_KEY, state.aiKey);
+        localStorage.setItem(CONSTANTS.PRODUCT_POOL_KEY, state.productPoolPath);
 
         renderPayloadInputs();
         renderShopSwitchMenu();
@@ -3285,6 +3290,19 @@
             codeEl.dataset.goodsName = goodsName;
             filingEl.value = filingPrice;
 
+            // 根据备案价自动填充门店单价（与 queryGoodsInfo 逻辑一致）
+            const price = parseFloat(filingPrice);
+            if (!isNaN(price) && price > 0) {
+                const shopEl = $('shopPrice');
+                if (price > 10000) {
+                    const maxFloat = Math.min(price - 10000, 1000);
+                    const float = Math.floor(Math.random() * (maxFloat + 1));
+                    shopEl.value = formatPrice(10000 + float);
+                } else {
+                    shopEl.value = filingPrice;
+                }
+            }
+
             // 根据商品类型自动选中品类 chip
             if (categoryType) selectCategoryChip(categoryType);
 
@@ -3315,6 +3333,25 @@
             showDropZone();
             try { await ensureLibs(); } catch (e) { addLog('依赖库加载失败: ' + e.message, 'error'); }
 
+            // 1) 优先尝试配置的商品池 URL
+            const poolUrl = (state.productPoolPath || '').trim();
+            if (poolUrl && /^https?:\/\//i.test(poolUrl)) {
+                addLog('正在从配置 URL 加载商品池: ' + poolUrl, 'info');
+                try {
+                    const resp = await fetch(poolUrl);
+                    if (resp.ok) {
+                        const buf = await resp.arrayBuffer();
+                        const fileName = poolUrl.split('/').pop().split('?')[0] || 'products.xlsx';
+                        handleFile(new File([buf], fileName), null);
+                        return;
+                    }
+                    addLog('商品池 URL 返回: ' + resp.status, 'warn');
+                } catch (e) {
+                    addLog('云端商品池加载失败: ' + e.message, 'warn');
+                }
+            }
+
+            // 2) 尝试 FSA IndexedDB 恢复
             const recovered = await tryRecoverSavedFile();
             if (recovered) {
                 handleFile(recovered, savedHandle);
@@ -3418,6 +3455,29 @@
         });
         document.getElementById('confirmImportBtn').addEventListener('click', confirmImportAction);
         document.getElementById('testDingTalkBtn').addEventListener('click', testDingTalk);
+        document.getElementById('configPoolBrowseBtn').addEventListener('click', async () => {
+            if (!window.showOpenFilePicker) {
+                showSnackbar({ message: '当前浏览器不支持 File System Access，请手动输入云端 URL' });
+                return;
+            }
+            try {
+                const [handle] = await window.showOpenFilePicker({
+                    types: [{ description: 'Excel 文件', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xls'] } }],
+                    startIn: 'documents'
+                });
+                const file = await handle.getFile();
+                document.getElementById('configProductPool').value = file.name;
+                // 保存 handle 到 IndexedDB 供后续恢复
+                const db = await new Promise((r, j) => { const req = indexedDB.open('ProductFileDB', 1); req.onupgradeneeded = () => req.result.createObjectStore('handles'); req.onsuccess = () => r(req.result); req.onerror = () => j(req.error); });
+                const tx = db.transaction('handles', 'readwrite');
+                tx.objectStore('handles').put(handle, 'lastExcel');
+                await new Promise(r => { tx.oncomplete = r; });
+                db.close();
+                addLog('已关联本地文件: ' + file.name, 'info');
+            } catch (e) {
+                if (e.name !== 'AbortError') addLog('文件选择失败: ' + e.message, 'error');
+            }
+        });
 
         document.getElementById('closeErrorDialogBtn').addEventListener('click', () => {
             els.errorDialog.open = false;
@@ -3634,6 +3694,7 @@
         state.aiEndpoint = localStorage.getItem(CONSTANTS.AI_ENDPOINT_KEY) || "";
         state.aiModel = localStorage.getItem(CONSTANTS.AI_MODEL_KEY) || "";
         state.aiKey = localStorage.getItem(CONSTANTS.AI_KEY_KEY) || "";
+        state.productPoolPath = localStorage.getItem(CONSTANTS.PRODUCT_POOL_KEY) || "";
 
         if (state.storePayloads.length && state.storePayloads[state.currentStoreIndex]?.payload?.trim()) {
             state.loginPayload = state.storePayloads[state.currentStoreIndex].payload.trim();

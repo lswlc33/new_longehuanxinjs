@@ -165,6 +165,15 @@
 
             <div
                 style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
+                商品池配置
+            </div>
+            <mdui-text-field id="configProductPool" label="商品池路径 (可为本地文件或云端URL)" variant="outlined" clearable
+                placeholder="https://example.com/products.xlsx 或留空手动拖拽上传"
+                style="margin-bottom: 12px;"></mdui-text-field>
+            <mdui-button id="configPoolBrowseBtn" variant="tonal" icon="folder_open" size="small" style="margin-bottom: 4px;">选择本地文件</mdui-button>
+
+            <div
+                style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
                 备份与还原
             </div>
             <p style="margin-bottom: 12px; font-size: 12px; opacity: 0.6;">导出配置为文本以便备份或在其他设备导入。</p>
