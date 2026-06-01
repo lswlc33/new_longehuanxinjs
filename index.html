@@ -52,24 +52,45 @@
             <div class="drawer-header">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <mdui-button-icon id="closeDrawerBtn" icon="arrow_back"></mdui-button-icon>
-                    <span class="section-title" style="font-size: 20px;">门店订单列表</span>
+                    <span class="section-title" style="font-size: 20px;">订单列表</span>
                 </div>
-                <mdui-button id="refreshOrdersBtn" variant="text">刷新列表</mdui-button>
+                <div class="drawer-header-btns">
+                    <button id="refreshOrdersBtn" class="header-action-btn">刷新</button>
+                    <button id="huanxinOrdersBtn" class="header-action-btn header-action-btn--accent">焕新</button>
+                </div>
             </div>
 
             <div class="drawer-search">
-                <mdui-text-field id="orderSearchMobile" icon="search" placeholder="手机号或订单号" variant="outlined" clearable
-                    style="flex: 1;"></mdui-text-field>
-                <mdui-button id="searchOrdersBtn" variant="filled">搜索</mdui-button>
+                <div class="search-input-wrap">
+                    <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                    <input id="orderSearchMobile" type="text" class="search-input" placeholder="手机号或订单号">
+                    <button id="searchOrdersBtn" class="search-btn">搜索</button>
+                </div>
             </div>
 
             <div class="drawer-filter">
-                <div id="orderFilterGroup" class="order-filter-chips">
-                    <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="0">未支付</mdui-chip>
-                    <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="2">已付款</mdui-chip>
-                    <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="5">退款</mdui-chip>
-                    <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="4">已超时</mdui-chip>
-                    <mdui-chip class="order-filter-chip" variant="filter" selectable data-value="queue">队列中</mdui-chip>
+                <div class="order-filter-row">
+                    <select id="orderTradeMonth" class="filter-select"></select>
+                    <select id="orderPayStateFilter" class="filter-select">
+                        <option value="">支付状态</option>
+                        <option value="0">待付款</option>
+                        <option value="1">支付中</option>
+                        <option value="2">已付款</option>
+                        <option value="3">退款中</option>
+                        <option value="4">已退款</option>
+                        <option value="5">支付失败</option>
+                        <option value="6">支付超时</option>
+                        <option value="7">已取消</option>
+                        <option value="8">退款中(取消)</option>
+                        <option value="9">已退款(取消)</option>
+                    </select>
+                    <select id="orderRecordStateFilter" class="filter-select">
+                        <option value="">核销状态</option>
+                        <option value="0">待补录</option>
+                        <option value="1">部分补录</option>
+                        <option value="2">核销失败</option>
+                        <option value="3">核销成功</option>
+                    </select>
                 </div>
             </div>
 
@@ -170,7 +191,8 @@
             <mdui-text-field id="configProductPool" label="商品池路径 (可为本地文件或云端URL)" variant="outlined" clearable
                 placeholder="https://example.com/products.xlsx 或留空手动拖拽上传"
                 style="margin-bottom: 12px;"></mdui-text-field>
-            <mdui-button id="configPoolBrowseBtn" variant="tonal" icon="folder_open" size="small" style="margin-bottom: 4px;">选择本地文件</mdui-button>
+            <mdui-button id="configPoolBrowseBtn" variant="tonal" icon="folder_open" size="small"
+                style="margin-bottom: 4px;">选择本地文件</mdui-button>
 
             <div
                 style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
@@ -311,7 +333,8 @@
         <mdui-card variant="filled">
             <div class="section-header">
                 <span class="section-title">商品信息</span>
-                <mdui-button id="openProductSearchBtn" variant="tonal" class="btn-small" icon="search">查找商品</mdui-button>
+                <mdui-button id="openProductSearchBtn" variant="tonal" class="btn-small"
+                    icon="search">查找商品</mdui-button>
             </div>
             <mdui-text-field id="goodsCode" label="商品编号" variant="outlined" clearable></mdui-text-field>
             <mdui-select id="goodsName" label="商品名称 (可点选最近记录)" placeholder="自动计算" variant="outlined"></mdui-select>
@@ -375,36 +398,32 @@
 
     <mdui-dialog id="productSearchDialog" close-on-overlay-click>
         <span slot="headline">商品查找与导入</span>
-        <div slot="description"
-            style="display:flex; flex-direction:column; gap:10px; overflow-y:auto;">
+        <div slot="description" style="display:flex; flex-direction:column; gap:10px; overflow-y:auto;">
 
-            <div id="psSheetChips"
-                style="display:none; flex-wrap:wrap; gap:6px;"></div>
+            <div id="psSheetChips" style="display:none; flex-wrap:wrap; gap:6px;"></div>
 
-            <mdui-text-field id="psSearchInput" label="输入型号/名称模糊搜索" variant="outlined"
-                icon="search" clearable disabled placeholder="请先加载 Excel 文件"
-                style="display:none;">
+            <mdui-text-field id="psSearchInput" label="输入型号/名称模糊搜索" variant="outlined" icon="search" clearable disabled
+                placeholder="请先加载 Excel 文件" style="display:none;">
             </mdui-text-field>
 
-            <div id="psSearchStatus"
-                style="display:none; font-size:11px; color:rgb(var(--mdui-color-outline));">
-                共 <b id="psTotalCount">0</b> 条，匹配 <b id="psMatchCount" style="color:rgb(var(--mdui-color-primary));">0</b> 条
+            <div id="psSearchStatus" style="display:none; font-size:11px; color:rgb(var(--mdui-color-outline));">
+                共 <b id="psTotalCount">0</b> 条，匹配 <b id="psMatchCount"
+                    style="color:rgb(var(--mdui-color-primary));">0</b> 条
             </div>
 
             <div id="psResultsList"
-                style="max-height:340px; overflow-y:auto; border-radius:10px; border:1px solid rgba(var(--mdui-color-outline),0.12);"></div>
+                style="max-height:340px; overflow-y:auto; border-radius:10px; border:1px solid rgba(var(--mdui-color-outline),0.12);">
+            </div>
 
             <div id="psDropZone"
                 style="border:2px dashed rgba(var(--mdui-color-outline),0.3); border-radius:12px; padding:28px 16px; text-align:center; cursor:pointer; transition:border-color 0.2s, background 0.2s;">
-                <mdui-icon name="cloud_upload"
-                    style="font-size:36px; opacity:0.4; display:block; margin:0 auto 6px;">
+                <mdui-icon name="cloud_upload" style="font-size:36px; opacity:0.4; display:block; margin:0 auto 6px;">
                 </mdui-icon>
                 <div style="font-size:14px; font-weight:500; margin-bottom:2px;">拖拽 Excel 文件到此处</div>
                 <div style="font-size:11px; color:rgb(var(--mdui-color-outline)); margin-bottom:10px;">
                     支持 .xlsx / .xls，多工作表自动识别
                 </div>
-                <input type="file" id="psFileInput" accept=".xlsx,.xls"
-                    style="display:none;">
+                <input type="file" id="psFileInput" accept=".xlsx,.xls" style="display:none;">
                 <mdui-button id="psBrowseBtn" variant="outlined" icon="folder_open" size="small">选择文件</mdui-button>
             </div>
 
@@ -414,7 +433,8 @@
                     <mdui-icon name="description" style="font-size:14px; flex-shrink:0;"></mdui-icon>
                     <span id="psFileName" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
                 </span>
-                <mdui-button id="psChangeFileBtn" variant="text" size="small" icon="folder_open" style="flex-shrink:0; font-size:11px;">更换文件</mdui-button>
+                <mdui-button id="psChangeFileBtn" variant="text" size="small" icon="folder_open"
+                    style="flex-shrink:0; font-size:11px;">更换文件</mdui-button>
             </div>
         </div>
         <mdui-button id="psCloseBtn" slot="action" variant="text">关闭</mdui-button>

@@ -36,6 +36,10 @@
         10: "部分退款-已退款", 11: "部分退款-退款中", 12: "部分退款-全额已退"
     };
 
+    const recordStates = {
+        0: "待补录", 1: "部分补录", 2: "核销失败", 3: "核销成功"
+    };
+
     const ORDER_TERMINAL_STATES = [2, 3, 4, 5, 6, 8, 10, 12];
 
     const state = {
@@ -1765,25 +1769,22 @@
         }
     }
 
-    function initOrderFilterChips() {
-        const chips = Array.from(document.querySelectorAll('#orderFilterGroup .order-filter-chip'));
-
-        chips.forEach(chip => {
-            chip.addEventListener('change', () => {
-                if (chip.selected) {
-                    chips.forEach(c => {
-                        if (c !== chip) c.selected = false;
-                    });
-                }
-                fetchOrders();
-            });
-        });
+    function getDefaultTradeMonth() {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        return `${y}-${m}`;
     }
 
-    function getSelectedOrderFilterValue() {
-        const chips = Array.from(document.querySelectorAll('#orderFilterGroup .order-filter-chip'));
-        const selectedChip = chips.find(chip => chip.selected);
-        return selectedChip ? (selectedChip.getAttribute('data-value') || "") : "";
+    function initTradeMonthSelect() {
+        const sel = document.getElementById('orderTradeMonth');
+        const now = new Date();
+        const currentMonth = now.getMonth() + 1;
+        const months = ['01','02','03','04','05','06','07','08','09','10','11','12'];
+        const labels = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'];
+        sel.innerHTML = months.map((m, i) =>
+            `<option value="${m}"${i + 1 === currentMonth ? ' selected' : ''}>${labels[i]}</option>`
+        ).join('');
     }
 
     function toggleOrderInput() {
@@ -1794,11 +1795,13 @@
     }
 
     function openOrderDrawer() {
+        initTradeMonthSelect();
         document.getElementById('orderDrawer').open = true;
         fetchOrders();
     }
 
     async function fetchOrders(page = 1) {
+        page = Number(page) || 1;
         const container = document.getElementById('orderListContainer');
         if (!state.currentToken) {
             container.innerHTML = '<div style="padding: 20px; text-align: center; color: red;">请先获取 Token</div>';
@@ -1815,35 +1818,30 @@
             state.orderHasMore = false;
         } else {
             state.orderLoadingMore = true;
-            toggleOrderLoadingIndicator(container, true);
         }
 
-        const filterVal = getSelectedOrderFilterValue();
+        const monthVal = document.getElementById('orderTradeMonth').value;
+        const tradeMonth = `${new Date().getFullYear()}-${monthVal}`;
+        const payStateVal = document.getElementById('orderPayStateFilter').value;
+        const recordStateVal = document.getElementById('orderRecordStateFilter').value;
         const searchVal = document.getElementById('orderSearchMobile').value.trim();
 
         if (isFirstPage) {
             state.orderLastSearchVal = searchVal;
-            state.orderLastFilterVal = filterVal;
         }
 
-        const res = await callApi('/salesuser/getSalesPayAndRefundOrderList', 'GET', {
-            buyerMobile: searchVal, pageNumber: String(page), uploadFile3COrder: ""
-        });
+        const params = {
+            tradeMonth: tradeMonth,
+            inputStr: searchVal,
+            pageNumber: String(page)
+        };
+        if (payStateVal !== '') params.payState = payStateVal;
+        if (recordStateVal !== '') params.recordState = recordStateVal;
 
-        if (res?.code === 0 && res.data?.shopOrders) {
-            let orders = res.data.shopOrders;
+        const res = await callApi('/salesuser/getShopOrderList', 'GET', params);
 
-            if (filterVal) {
-                if (filterVal === "0") {
-                    orders = orders.filter(o => o.payState === 0 || o.payState === 1);
-                } else if (filterVal === "queue") {
-                    orders = orders.filter(o => findOrderInQueue(o.ccbPayOrderNumber) !== null);
-                } else if (filterVal === "5") {
-                    orders = orders.filter(o => [5, 7, 8, 9, 10, 11, 12].includes(o.payState));
-                } else {
-                    orders = orders.filter(o => o.payState === parseInt(filterVal, 10));
-                }
-            }
+        if (res?.code === 0 && Array.isArray(res.data)) {
+            let orders = res.data;
 
             if (!isFirstPage) {
                 state.orderSearchResults = [...state.orderSearchResults, ...orders];
@@ -1851,12 +1849,10 @@
                 state.orderSearchResults = orders;
             }
 
-            const totalPages = res.data.totalPages || res.data.totalPage || res.data.pageCount;
-            if (totalPages !== undefined) {
-                state.orderHasMore = page < totalPages;
-            } else {
-                state.orderHasMore = orders.length > 0;
-            }
+            const totalCount = res.count;
+            state.orderHasMore = totalCount != null
+                ? state.orderSearchResults.length < Number(totalCount)
+                : orders.length > 0;
             state.orderCurrentPage = page;
 
             addLog(`获取到订单共 ${state.orderSearchResults.length} 条`, "info");
@@ -1877,13 +1873,13 @@
 
         if (!isFirstPage) {
             state.orderLoadingMore = false;
-            toggleOrderLoadingIndicator(container, false);
         }
     }
 
     function renderOrderList(container, orders, hasMore = false) {
         container.innerHTML = orders.map(order => {
             const statusText = payStates[order.payState] || "未知";
+            const price = Number(order.shopActualPayPrice || 0).toFixed(2);
 
             let footerContent = '';
             if (order.payState === 0 || order.payState === 1) {
@@ -1891,12 +1887,12 @@
                     <mdui-button icon="qr_code_2" variant="tonal" class="open-qr-btn" data-order-number="${escapeHtml(order.ccbPayOrderNumber)}">
                         去支付
                     </mdui-button>
-                    <span class="price-value">¥${escapeHtml(order.shopActualPayPrice)}</span>
+                    <span class="price-value">¥${escapeHtml(price)}</span>
                 `;
             } else {
                 footerContent = `
                     <span class="price-label">实付金额</span>
-                    <span class="price-value">¥${escapeHtml(order.shopActualPayPrice)}</span>
+                    <span class="price-value">¥${escapeHtml(price)}</span>
                 `;
             }
 
@@ -1904,8 +1900,8 @@
             <div class="order-card" data-order-number="${escapeHtml(order.ccbPayOrderNumber)}">
                 <div class="card-header">
                     <div>
-                        <div class="buyer-mobile">${escapeHtml(order.buyerMobile)}</div>
-                        <div class="buyer-name">${escapeHtml(order.buyerName)}</div>
+                        <div class="buyer-name">${escapeHtml(order.shopOrderNumber)}</div>
+                        <div class="buyer-mobile">${escapeHtml(order.buyerMobile || '')}</div>
                     </div>
                     <div style="display:flex; align-items: center; gap:4px;">
                         <div class="status-badge status-${order.payState}">${escapeHtml(statusText)}</div>
@@ -1913,7 +1909,6 @@
                     </div>
                 </div>
                 <div class="info-grid">
-                    <span class="label">销售单号:</span><span class="value">${escapeHtml(order.shopOrderNumber)}</span>
                     <span class="label">建行单号:</span><span class="value">${escapeHtml(order.ccbPayOrderNumber || '无')}</span>
                     <span class="label">创建时间:</span><span class="value">${escapeHtml(order.createTime)}</span>
                 </div>
@@ -1923,31 +1918,116 @@
             </div>`;
         }).join('');
 
-        if (hasMore) {
-            const sentinel = document.createElement('div');
-            sentinel.id = 'orderScrollSentinel';
-            sentinel.className = 'order-scroll-sentinel';
-            sentinel.style.display = 'none';
-            sentinel.innerHTML = '<mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>加载更多...</span>';
-            container.appendChild(sentinel);
-        }
+        setupOrderSentinel(hasMore);
     }
 
-    function toggleOrderLoadingIndicator(container, show) {
-        const sentinel = document.getElementById('orderScrollSentinel');
-        if (sentinel) {
-            sentinel.style.display = show ? '' : 'none';
+    let _orderSentinelObs = null;
+
+    function setupOrderSentinel(hasMore) {
+        if (_orderSentinelObs) {
+            _orderSentinelObs.disconnect();
+            _orderSentinelObs = null;
         }
+        const oldSentinel = document.getElementById('orderScrollSentinel');
+        if (oldSentinel) oldSentinel.remove();
+
+        if (!hasMore) return;
+
+        const container = document.getElementById('orderListContainer');
+        const sentinel = document.createElement('div');
+        sentinel.id = 'orderScrollSentinel';
+        sentinel.className = 'order-scroll-sentinel';
+        sentinel.innerHTML = '<mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>加载更多...</span>';
+        container.appendChild(sentinel);
     }
 
     function handleOrderListScroll() {
         const container = document.getElementById('orderListContainer');
-        if (!container || state.orderLoadingMore || !state.orderHasMore) return;
+        if (!container || state.orderLoadingMore || state.orderHasMore === false) return;
 
         const scrollBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
         if (scrollBottom < 200) {
             fetchOrders(state.orderCurrentPage + 1);
         }
+    }
+
+    let _huanxinRunning = false;
+
+    async function huanxinList() {
+        if (_huanxinRunning) return;
+        if (!state.orderSearchResults.length) return showSnackbar({ message: "请先加载订单列表" });
+
+        _huanxinRunning = true;
+        const refreshBtn = document.getElementById('refreshOrdersBtn');
+        const huanxinBtn = document.getElementById('huanxinOrdersBtn');
+        refreshBtn.disabled = true;
+        huanxinBtn.disabled = true;
+        huanxinBtn.textContent = '焕新中...';
+
+        const container = document.getElementById('orderListContainer');
+        const cards = container.querySelectorAll('.order-card');
+
+        for (let i = 0; i < state.orderSearchResults.length; i++) {
+            const order = state.orderSearchResults[i];
+            const card = cards[i];
+            if (!card) continue;
+
+            card.innerHTML = `<div class="huanxin-loading"><mdui-circular-progress style="width:16px;height:16px;"></mdui-circular-progress><span>加载详情...</span></div>`;
+
+            const res = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber: order.ccbPayOrderNumber });
+
+            if (res?.code === 0 && res.data?.payOrder) {
+                const detail = res.data.payOrder;
+                const product = detail.goodsOrderList?.[0] || {};
+                card.innerHTML = renderHuanxinCard(detail, product);
+                card.classList.add('order-card-huanxin', 'order-card-flip');
+                card.style.animationDelay = '0s';
+            } else {
+                card.classList.add('order-card-huanxin', 'order-card-flip');
+            }
+
+            await new Promise(r => setTimeout(r, 120));
+        }
+
+        _huanxinRunning = false;
+        refreshBtn.disabled = false;
+        huanxinBtn.disabled = false;
+        huanxinBtn.textContent = '焕新';
+    }
+
+    function renderHuanxinCard(order, product) {
+        const price = Number(order.shopActualPayPrice || 0).toFixed(2);
+        const statusText = payStates[order.payState] || '未知';
+        const shortAddr = (() => {
+            const addr = order.address || '';
+            const parts = addr.split('-');
+            return parts.length > 2 ? parts.slice(2).join('-').trim() || addr : addr;
+        })();
+        const goodsModel = product.goodsModel || product.goodsName || '';
+        const recordText = order.recordState != null ? (recordStates[order.recordState] || order.recordState) : '';
+
+        return `
+            <div class="huanxin-top">
+                <div>
+                    <span style="font-weight:700;font-size:14px;">${escapeHtml(order.buyerName || '-')}</span>
+                    <span style="font-size:12px;color:rgb(var(--mdui-color-outline));margin-left:6px;">${escapeHtml(order.buyerMobile || '')}</span>
+                </div>
+                <span class="status-badge status-${order.payState}">${escapeHtml(statusText)}</span>
+            </div>
+            <div class="huanxin-row huanxin-full">
+                <span class="huanxin-label">地址</span>
+                <span class="huanxin-value">${escapeHtml(shortAddr || '-')}</span>
+            </div>
+            <div class="huanxin-row huanxin-full">
+                <span class="huanxin-label">型号</span>
+                <span class="huanxin-value">${escapeHtml(goodsModel || '-')}</span>
+            </div>
+            ${recordText ? `<div class="huanxin-row"><span class="huanxin-label">核验</span><span class="huanxin-value">${escapeHtml(recordText)}</span></div>` : ''}
+            <div class="huanxin-bottom">
+                <span style="font-size:11px;color:rgb(var(--mdui-color-outline));">${escapeHtml(order.shopOrderNumber || '')}</span>
+                <span style="font-size:16px;font-weight:700;color:rgb(var(--mdui-color-primary));">¥${escapeHtml(price)}</span>
+            </div>
+        `;
     }
 
     async function viewOrderDetail(orderNumber) {
@@ -2040,31 +2120,71 @@
     function renderOrderDetailContent(order, product) {
         const itemHtml = (l, v, full = false) => `<div class="detail-item ${full ? 'detail-full-width' : ''}"><span class="detail-label">${escapeHtml(l)}</span><span class="detail-value">${escapeHtml(v || '-')}</span></div>`;
 
+        const price = Number(order.shopActualPayPrice || 0).toFixed(2);
+        const statusText = payStates[order.payState] || '未知';
+        const shortAddr = (() => {
+            const addr = order.address || '';
+            const parts = addr.split('-');
+            return parts.length > 2 ? parts.slice(2).join('-').trim() || addr : addr;
+        })();
+        const goodsModel = product.goodsModel || product.goodsName || '';
+        const recordText = order.recordState != null ? (recordStates[order.recordState] || order.recordState) : '';
+
         return `
+            <div class="detail-summary-card">
+                <div class="detail-summary-top">
+                    <div class="detail-summary-identity">
+                        <span class="detail-summary-name">${escapeHtml(order.buyerName || order.buyerMobile || '-')}</span>
+                        <span class="detail-summary-phone">${escapeHtml(order.buyerMobile || '')}</span>
+                    </div>
+                    <button class="fill-order-detail-btn compact-btn">填入</button>
+                </div>
+                <div class="detail-summary-row detail-summary-full">
+                    <span class="detail-summary-label">地址</span>
+                    <span class="detail-summary-value">${escapeHtml(shortAddr || '-')}</span>
+                </div>
+                <div class="detail-summary-row detail-summary-full">
+                    <span class="detail-summary-label">型号</span>
+                    <span class="detail-summary-value">${escapeHtml(goodsModel || '-')}</span>
+                </div>
+                <div class="detail-summary-price">
+                    <span class="detail-summary-price-value">¥${escapeHtml(price)}</span>
+                    <span class="status-badge status-${order.payState}" style="margin-left:auto;">${escapeHtml(statusText)}</span>
+                </div>
+                ${recordText ? `<div class="detail-summary-row"><span class="detail-summary-label">核验</span><span class="detail-summary-value">${escapeHtml(recordText)}</span></div>` : ''}
+            </div>
+
             <details class="detail-collapse">
-                <summary>基本信息</summary>
+                <summary>单号信息</summary>
                 <div class="detail-collapse-content">
-                    ${itemHtml('买家姓名', order.buyerName)} ${itemHtml('手机号码', order.buyerMobile)}
-                    ${itemHtml('订单状态', payStates[order.payState])} ${itemHtml('支付时间', order.payTime || '未支付')}
+                    ${itemHtml('门店销售单号', order.shopOrderNumber)}
+                    ${itemHtml('建行交易单号', order.ccbPayOrderNumber, true)}
                     ${itemHtml('下单时间', order.createTime || '-', true)}
+                    ${itemHtml('支付时间', order.payTime || '未支付', true)}
                 </div>
             </details>
-            <div class="section-sub-title">单号信息</div>
-            ${itemHtml('门店销售单号', order.shopOrderNumber)}
-            ${itemHtml('建行交易单号', order.ccbPayOrderNumber, true)}
-            <div class="detail-divider"></div>
-            <div class="section-sub-title" style="display: flex; align-items: center; justify-content: space-between;">
-                <span>商品与地址</span>
-                <mdui-button variant="text" class="fill-order-detail-btn"
-                    style="color: rgb(var(--mdui-color-error)); font-size: 12px; height: 28px; min-width: 0;">一键填入</mdui-button>
-            </div>
-            ${itemHtml('品牌', product.brand)} ${itemHtml('商品分类', product.goodsType)}
-            ${itemHtml('商品编号', product.goodsCode || order.goodsCode || '-', true)} ${itemHtml('商品型号', product.goodsModel, true)}
-            ${itemHtml('收货地址', order.address, true)}
-            <div class="detail-divider"></div>
-            <div class="section-sub-title">金额明细</div>
-            ${itemHtml('开单原价', `¥${order.shopOriginalPrice}`)} ${itemHtml('政府补贴', `¥${order.subsidyTotalAmount}`)}
-            ${itemHtml('实付金额', `¥${order.shopActualPayPrice}`, true)}
+            <details class="detail-collapse">
+                <summary>商品信息</summary>
+                <div class="detail-collapse-content">
+                    ${itemHtml('品牌', product.brand)} ${itemHtml('商品分类', product.goodsType)}
+                    ${itemHtml('商品编号', product.goodsCode || order.goodsCode || '-', true)}
+                    ${itemHtml('商品型号', product.goodsModel, true)}
+                </div>
+            </details>
+            <details class="detail-collapse">
+                <summary>地址信息</summary>
+                <div class="detail-collapse-content">
+                    ${itemHtml('收货地址', order.address, true)}
+                </div>
+            </details>
+            <details class="detail-collapse">
+                <summary>金额明细</summary>
+                <div class="detail-collapse-content">
+                    ${itemHtml('开单原价', order.shopOriginalPrice != null ? '¥' + order.shopOriginalPrice : '-')}
+                    ${itemHtml('政府补贴', order.subsidyTotalAmount != null ? '¥' + order.subsidyTotalAmount : '-')}
+                    ${itemHtml('实付金额', '¥' + price, true)}
+                </div>
+            </details>
         `;
     }
 
@@ -2518,11 +2638,12 @@
     }
 
     async function generateNextOrderNumber() {
-        const res = await callApi('/salesuser/getSalesPayAndRefundOrderList', 'GET', {
-            buyerMobile: "", pageNumber: "1", uploadFile3COrder: ""
+        const tradeMonth = getDefaultTradeMonth();
+        const res = await callApi('/salesuser/getShopOrderList', 'GET', {
+            tradeMonth: tradeMonth, inputStr: "", pageNumber: "1"
         });
-        if (res?.code === 0 && res.data?.shopOrders?.length > 0) {
-            const num = parseInt(res.data.shopOrders[0].shopOrderNumber, 10);
+        if (res?.code === 0 && Array.isArray(res.data) && res.data.length > 0) {
+            const num = parseInt(res.data[0].shopOrderNumber, 10);
             return Number.isNaN(num) ? "1" : (num + 1).toString();
         }
         return "1";
@@ -3451,11 +3572,17 @@
         document.getElementById('closeDrawerBtn').addEventListener('click', () => {
             document.getElementById('orderDrawer').open = false;
         });
-        document.getElementById('refreshOrdersBtn').addEventListener('click', fetchOrders);
-        document.getElementById('searchOrdersBtn').addEventListener('click', fetchOrders);
+        document.getElementById('refreshOrdersBtn').addEventListener('click', () => fetchOrders());
+        document.getElementById('huanxinOrdersBtn').addEventListener('click', huanxinList);
+        document.getElementById('searchOrdersBtn').addEventListener('click', () => fetchOrders());
         document.getElementById('orderSearchMobile').addEventListener('keydown', (e) => {
             if (e.key === 'Enter') fetchOrders();
         });
+
+        document.getElementById('orderPayStateFilter').addEventListener('change', () => fetchOrders());
+        document.getElementById('orderRecordStateFilter').addEventListener('change', () => fetchOrders());
+        document.getElementById('orderTradeMonth').addEventListener('change', () => fetchOrders());
+        document.getElementById('orderListContainer').addEventListener('scroll', handleOrderListScroll);
 
         document.getElementById('closeQrDialogBtn').addEventListener('click', () => {
             els.qrDialog.open = false;
@@ -3625,8 +3752,6 @@
             }
         });
 
-        document.getElementById('orderListContainer').addEventListener('scroll', handleOrderListScroll);
-
         document.getElementById('lsItemList').addEventListener('click', (e) => {
             const btn = e.target.closest('mdui-button[data-action]');
             if (!btn) return;
@@ -3723,7 +3848,6 @@
         }
 
         renderShopSwitchMenu();
-        initOrderFilterChips();
         bindEventListeners();
         ProductSearch.init();
         renderDraftBar();
