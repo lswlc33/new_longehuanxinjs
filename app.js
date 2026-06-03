@@ -2453,12 +2453,15 @@
             const validCodes = (res.data.countrySubsidyCateCodes || "").split(',').map(c => c.trim()).filter(c => c);
             const cityMap = {};
             (res.data.cateCodeList || []).forEach(item => {
-                if (item.cityName) cityMap[item.cateCode] = item.cityName;
+                if (item.cityName) cityMap[item.cateCode] = item;
             });
             chips.forEach(c => {
                 c.selected = validCodes.includes(c.value);
                 if (cityMap[c.value]) {
-                    c.textContent = c.dataset.originalText + '（' + cityMap[c.value].replace(/市$/, '') + '）';
+                    const { cityName, mode } = cityMap[c.value];
+                    const city = cityName.slice(0, -1);
+                    const modeText = mode === '0' ? '线上' : '线下';
+                    c.textContent = c.dataset.originalText + '（' + city + modeText + '）';
                 } else {
                     c.textContent = c.dataset.originalText;
                 }
@@ -2537,13 +2540,16 @@
                     const chips = document.querySelectorAll('#productCategoryChips mdui-chip');
                     const cityMap = {};
                     (res.data.cateCodeList || []).forEach(item => {
-                        if (item.cityName) cityMap[item.cateCode] = item.cityName;
+                        if (item.cityName) cityMap[item.cateCode] = item;
                     });
                     chips.forEach(c => {
                         if (!c.dataset.originalText) c.dataset.originalText = c.textContent;
                         c.selected = validCodes.includes(c.value);
                         if (cityMap[c.value]) {
-                            c.textContent = c.dataset.originalText + '（' + cityMap[c.value].replace(/市$/, '') + '）';
+                            const { cityName, mode } = cityMap[c.value];
+                            const city = cityName.slice(0, -1);
+                            const modeText = mode === '0' ? '线上' : '线下';
+                            c.textContent = c.dataset.originalText + '（' + city + modeText + '）';
                         } else {
                             c.textContent = c.dataset.originalText;
                         }
