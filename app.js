@@ -2444,10 +2444,25 @@
         const res = await callApi('/salesuser/queryCustomerChannelSubsidyBalance', 'GET', { buyerMobile: mobile });
         const chips = document.querySelectorAll('#productCategoryChips mdui-chip');
 
+        chips.forEach(c => {
+            if (!c.dataset.originalText) c.dataset.originalText = c.textContent;
+        });
+
         if (res?.code === 0) {
             addLog(`资格查询成功，返点Code: ${res.data.countrySubsidyCateCodes || '无'}`, "info");
             const validCodes = (res.data.countrySubsidyCateCodes || "").split(',').map(c => c.trim()).filter(c => c);
-            chips.forEach(c => c.selected = validCodes.includes(c.value));
+            const cityMap = {};
+            (res.data.cateCodeList || []).forEach(item => {
+                if (item.cityName) cityMap[item.cateCode] = item.cityName;
+            });
+            chips.forEach(c => {
+                c.selected = validCodes.includes(c.value);
+                if (cityMap[c.value]) {
+                    c.textContent = c.dataset.originalText + '（' + cityMap[c.value].replace(/市$/, '') + '）';
+                } else {
+                    c.textContent = c.dataset.originalText;
+                }
+            });
             sortSelectedChipsToTop();
 
             if (validCodes.length > 0) {
@@ -2456,7 +2471,10 @@
                 showRemindBtn(false);
             } else {
                 showSnackbar({ message: `查询成功，尚未领取品类资格`, closeable: true });
-                chips.forEach(c => c.selected = false);
+                chips.forEach(c => {
+                    c.selected = false;
+                    c.textContent = c.dataset.originalText;
+                });
                 showRemindBtn(true);
             }
         } else {
@@ -2464,7 +2482,10 @@
             addLog(`资格查询失败: ${errMsg}`, "error");
             mobileField.setCustomValidity(errMsg);
             mobileField.reportValidity();
-            chips.forEach(c => c.selected = false);
+            chips.forEach(c => {
+                c.selected = false;
+                c.textContent = c.dataset.originalText;
+            });
             showRemindBtn(true);
         }
     }
@@ -2514,7 +2535,19 @@
                     stopRemindPolling();
                     showRemindBtn(false);
                     const chips = document.querySelectorAll('#productCategoryChips mdui-chip');
-                    chips.forEach(c => c.selected = validCodes.includes(c.value));
+                    const cityMap = {};
+                    (res.data.cateCodeList || []).forEach(item => {
+                        if (item.cityName) cityMap[item.cateCode] = item.cityName;
+                    });
+                    chips.forEach(c => {
+                        if (!c.dataset.originalText) c.dataset.originalText = c.textContent;
+                        c.selected = validCodes.includes(c.value);
+                        if (cityMap[c.value]) {
+                            c.textContent = c.dataset.originalText + '（' + cityMap[c.value].replace(/市$/, '') + '）';
+                        } else {
+                            c.textContent = c.dataset.originalText;
+                        }
+                    });
                     sortSelectedChipsToTop();
                     document.getElementById('remindSuccessDialog').open = true;
                 }
