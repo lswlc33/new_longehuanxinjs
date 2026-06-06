@@ -36,6 +36,13 @@
         10: "部分退款-已退款", 11: "部分退款-退款中", 12: "部分退款-全额已退"
     };
 
+    const payStateGroups = {
+        g_pending: [0, 1],
+        g_paid: [2],
+        g_failed: [3, 4, 6],
+        g_refunded: [5, 8]
+    };
+
     const recordStates = {
         0: "待补录", 1: "部分补录", 2: "核销失败", 3: "核销成功"
     };
@@ -77,7 +84,8 @@
         orderCurrentPage: 1,
         orderHasMore: false,
         orderLoadingMore: false,
-        orderSearchResults: []
+        orderSearchResults: [],
+        orderSubStates: null
     };
 
     const els = {};
@@ -1816,6 +1824,7 @@
             state.orderSearchResults = [];
             state.orderCurrentPage = 1;
             state.orderHasMore = false;
+            state.orderSubStates = null;
         } else {
             state.orderLoadingMore = true;
         }
@@ -1830,45 +1839,98 @@
             state.orderLastSearchVal = searchVal;
         }
 
-        const params = {
-            tradeMonth: tradeMonth,
-            inputStr: searchVal,
-            pageNumber: String(page)
-        };
-        if (payStateVal !== '') params.payState = payStateVal;
-        if (recordStateVal !== '') params.recordState = recordStateVal;
+        const baseParams = { tradeMonth, inputStr: searchVal };
+        if (recordStateVal !== '') baseParams.recordState = recordStateVal;
 
-        const res = await callApi('/salesuser/getShopOrderList', 'GET', params);
+        const groupStates = payStateGroups[payStateVal];
+        const isGrouped = !!groupStates;
 
-        if (res?.code === 0 && Array.isArray(res.data)) {
-            let orders = res.data;
-
-            if (!isFirstPage) {
-                state.orderSearchResults = [...state.orderSearchResults, ...orders];
-            } else {
-                state.orderSearchResults = orders;
+        if (isGrouped) {
+            if (isFirstPage || !state.orderSubStates) {
+                state.orderSubStates = groupStates.map(s => ({ state: s, page: 1, hasMore: true, fetched: 0, total: null }));
             }
 
-            const totalCount = res.count;
-            state.orderHasMore = totalCount != null
-                ? state.orderSearchResults.length < Number(totalCount)
-                : orders.length > 0;
+            const subStates = state.orderSubStates.filter(ss => ss.hasMore);
+            if (!subStates.length && !isFirstPage) {
+                state.orderHasMore = false;
+                state.orderLoadingMore = false;
+                setupOrderSentinel(false);
+                return;
+            }
+
+            const fetches = subStates.map(async ss => {
+                const params = { ...baseParams, payState: String(ss.state), pageNumber: String(ss.page) };
+                const res = await callApi('/salesuser/getShopOrderList', 'GET', params);
+                if (res?.code === 0 && Array.isArray(res.data)) {
+                    if (res.count != null) ss.total = Number(res.count);
+                    ss.fetched += res.data.length;
+                    ss.hasMore = ss.total != null ? ss.fetched < ss.total : res.data.length > 0;
+                    return res.data;
+                }
+                ss.hasMore = false;
+                return [];
+            });
+
+            const results = await Promise.all(fetches);
+            const newOrders = results.flat();
+
+            if (!isFirstPage) {
+                state.orderSearchResults = [...state.orderSearchResults, ...newOrders];
+                subStates.forEach(ss => { ss.page++; });
+            } else {
+                state.orderSearchResults = newOrders;
+                subStates.forEach(ss => { ss.page = 2; });
+            }
+
+            state.orderHasMore = subStates.some(ss => ss.hasMore);
             state.orderCurrentPage = page;
 
             addLog(`获取到订单共 ${state.orderSearchResults.length} 条`, "info");
             if (!state.orderSearchResults.length) {
                 container.innerHTML = '<div style="padding: 32px; text-align: center; color: #999;">未找到相关订单</div>';
                 state.orderHasMore = false;
+                if (!isFirstPage) state.orderLoadingMore = false;
                 return;
             }
 
             renderOrderList(container, state.orderSearchResults, state.orderHasMore);
         } else {
-            if (isFirstPage) {
-                addLog(`加载订单失败: ${res?.msg}`, "error");
-                container.innerHTML = `<div style="text-align: center; color: red;">加载失败: ${escapeHtml(res?.msg || '未知错误')}</div>`;
+            const params = { ...baseParams, pageNumber: String(page) };
+            if (payStateVal !== '') params.payState = payStateVal;
+
+            const res = await callApi('/salesuser/getShopOrderList', 'GET', params);
+
+            if (res?.code === 0 && Array.isArray(res.data)) {
+                let orders = res.data;
+
+                if (!isFirstPage) {
+                    state.orderSearchResults = [...state.orderSearchResults, ...orders];
+                } else {
+                    state.orderSearchResults = orders;
+                }
+
+                const totalCount = res.count;
+                state.orderHasMore = totalCount != null
+                    ? state.orderSearchResults.length < Number(totalCount)
+                    : orders.length > 0;
+                state.orderCurrentPage = page;
+
+                addLog(`获取到订单共 ${state.orderSearchResults.length} 条`, "info");
+                if (!state.orderSearchResults.length) {
+                    container.innerHTML = '<div style="padding: 32px; text-align: center; color: #999;">未找到相关订单</div>';
+                    state.orderHasMore = false;
+                    if (!isFirstPage) state.orderLoadingMore = false;
+                    return;
+                }
+
+                renderOrderList(container, state.orderSearchResults, state.orderHasMore);
+            } else {
+                if (isFirstPage) {
+                    addLog(`加载订单失败: ${res?.msg}`, "error");
+                    container.innerHTML = `<div style="text-align: center; color: red;">加载失败: ${escapeHtml(res?.msg || '未知错误')}</div>`;
+                }
+                state.orderHasMore = false;
             }
-            state.orderHasMore = false;
         }
 
         if (!isFirstPage) {
@@ -1931,9 +1993,19 @@
         const oldSentinel = document.getElementById('orderScrollSentinel');
         if (oldSentinel) oldSentinel.remove();
 
-        if (!hasMore) return;
-
         const container = document.getElementById('orderListContainer');
+        if (!hasMore) {
+            if (state.orderSearchResults.length > 0) {
+                const endEl = document.createElement('div');
+                endEl.id = 'orderScrollSentinel';
+                endEl.className = 'order-scroll-sentinel';
+                endEl.style.opacity = '0.5';
+                endEl.innerHTML = '<span>— 到底了 —</span>';
+                container.appendChild(endEl);
+            }
+            return;
+        }
+
         const sentinel = document.createElement('div');
         sentinel.id = 'orderScrollSentinel';
         sentinel.className = 'order-scroll-sentinel';

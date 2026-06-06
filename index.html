@@ -73,14 +73,10 @@
                     <select id="orderTradeMonth" class="filter-select"></select>
                     <select id="orderPayStateFilter" class="filter-select">
                         <option value="">支付状态</option>
-                        <option value="0">待付款</option>
-                        <option value="1">支付中</option>
-                        <option value="2">已付款</option>
-                        <option value="3">已退款</option>
-                        <option value="4">支付失败</option>
-                        <option value="5">支付超时</option>
-                        <option value="6">已取消</option>
-                        <option value="8">已退款(取消)</option>
+                        <option value="g_pending">待支付</option>
+                        <option value="g_paid">已付款</option>
+                        <option value="g_failed">支付失败</option>
+                        <option value="g_refunded">已退款</option>
                     </select>
                     <select id="orderRecordStateFilter" class="filter-select">
                         <option value="">核销状态</option>
