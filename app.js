@@ -2131,7 +2131,7 @@
         loading.style.display = 'none';
 
         if (res?.code === 0 && res.data?.payOrder) {
-            renderOrderDetail(dialog, res.data.payOrder, detailPushBtn);
+            renderOrderDetail(dialog, res.data.payOrder, detailPushBtn, res.data.refundOrderVos);
         } else {
             content.style.display = 'block';
             content.innerHTML = `<div style="text-align:center; color:red;">获取失败: ${escapeHtml(res?.msg)}</div>`;
@@ -2148,7 +2148,7 @@
         dialog.appendChild(btn);
     }
 
-    function renderOrderDetail(dialog, order, detailPushBtn) {
+    function renderOrderDetail(dialog, order, detailPushBtn, refundOrderVos) {
         const product = order.goodsOrderList?.[0] || {};
         state.currentDetailOrder = order;
 
@@ -2191,11 +2191,11 @@
         addActionButton(dialog, "关闭", () => dialog.open = false);
 
         const content = document.getElementById('detailContent');
-        content.innerHTML = renderOrderDetailContent(order, product);
+        content.innerHTML = renderOrderDetailContent(order, product, refundOrderVos);
         content.style.display = 'grid';
     }
 
-    function renderOrderDetailContent(order, product) {
+    function renderOrderDetailContent(order, product, refundOrderVos) {
         const itemHtml = (l, v, full = false) => `<div class="detail-item ${full ? 'detail-full-width' : ''}"><span class="detail-label">${escapeHtml(l)}</span><span class="detail-value">${escapeHtml(v || '-')}</span></div>`;
 
         const price = Number(order.shopActualPayPrice || 0).toFixed(2);
@@ -2231,6 +2231,25 @@
                 </div>
                 ${recordText ? `<div class="detail-summary-row"><span class="detail-summary-label">核验</span><span class="detail-summary-value">${escapeHtml(recordText)}</span></div>` : ''}
             </div>
+
+            ${(() => {
+                const refundedList = [5, 8];
+                if (!refundedList.includes(order.payState) || !Array.isArray(refundOrderVos) || !refundOrderVos.length) return '';
+                return refundOrderVos.map(refundVo => {
+                    const r = refundVo.buyerRefundOrder || {};
+                    return `<details class="detail-collapse" open>
+                        <summary>退款信息</summary>
+                        <div class="detail-collapse-content">
+                            ${itemHtml('建行退款单号', r.ccbRefundOrderNumber, true)}
+                            ${itemHtml('门店退款单号', r.shopRefundOrderNumber, true)}
+                            ${itemHtml('建行支付单号', r.ccbPayOrderNumber, true)}
+                            ${itemHtml('顾客手机', r.buyerMobile)}
+                            ${itemHtml('顾客姓名', r.buyerName)}
+                            ${itemHtml('退款时间', r.createTime || '-', true)}
+                        </div>
+                    </details>`;
+                }).join('');
+            })()}
 
             <details class="detail-collapse">
                 <summary>单号信息</summary>
