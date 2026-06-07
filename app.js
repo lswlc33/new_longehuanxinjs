@@ -1858,20 +1858,22 @@
                 return;
             }
 
-            const fetches = subStates.map(async ss => {
+            const results = [];
+            for (let i = 0; i < subStates.length; i++) {
+                if (i > 0) await new Promise(r => setTimeout(r, 100));
+                const ss = subStates[i];
                 const params = { ...baseParams, payState: String(ss.state), pageNumber: String(ss.page) };
                 const res = await callApi('/salesuser/getShopOrderList', 'GET', params);
                 if (res?.code === 0 && Array.isArray(res.data)) {
                     if (res.count != null) ss.total = Number(res.count);
                     ss.fetched += res.data.length;
                     ss.hasMore = ss.total != null ? ss.fetched < ss.total : res.data.length > 0;
-                    return res.data;
+                    results.push(res.data);
+                } else {
+                    ss.hasMore = false;
+                    results.push([]);
                 }
-                ss.hasMore = false;
-                return [];
-            });
-
-            const results = await Promise.all(fetches);
+            }
             const newOrders = results.flat();
 
             if (!isFirstPage) {
@@ -2044,7 +2046,11 @@
             const card = cards[i];
             if (!card) continue;
 
+            const h = card.offsetHeight;
+            card.style.minHeight = h + 'px';
             card.innerHTML = `<div class="huanxin-loading"><mdui-circular-progress style="width:16px;height:16px;"></mdui-circular-progress><span>加载详情...</span></div>`;
+
+            await new Promise(r => setTimeout(r, 200));
 
             const res = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber: order.ccbPayOrderNumber });
 
@@ -2058,7 +2064,7 @@
                 card.classList.add('order-card-huanxin', 'order-card-flip');
             }
 
-            await new Promise(r => setTimeout(r, 120));
+            requestAnimationFrame(() => { card.style.minHeight = ''; });
         }
 
         _huanxinRunning = false;
