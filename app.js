@@ -1695,6 +1695,8 @@
         localStorage.setItem(CONSTANTS.AI_KEY_KEY, state.aiKey);
         localStorage.setItem(CONSTANTS.PRODUCT_POOL_KEY, state.productPoolPath);
 
+        ProductSearch.resetCache();
+
         renderPayloadInputs();
         renderShopSwitchMenu();
         closeConfigDialog();
@@ -3178,6 +3180,8 @@
         let libsLoaded = false;
         let savedHandle = null;
         let currentFileName = "";
+        let dataLoaded = false;
+        let poolDownloaded = false;
 
         const DB_NAME = 'ProductFileDB';
         const DB_STORE = 'handles';
@@ -3327,6 +3331,8 @@
         // ---- 渲染工作表 Chips ----
         function renderSheetChips() {
             const container = $('psSheetChips');
+            const wrapper = $('psSheetChipsWrap');
+            const expandRow = $('psChipExpandRow');
             container.innerHTML = '';
             sheetNames.forEach(name => {
                 const chip = document.createElement('mdui-chip');
@@ -3335,16 +3341,23 @@
                 chip.dataset.sheet = name;
                 chip.textContent = name + ' (' + allSheetData[name].length + ')';
                 chip.addEventListener('click', () => {
-                    // 单选：取消其他 chip
                     container.querySelectorAll('mdui-chip').forEach(c => c.selected = false);
                     chip.selected = true;
                     selectSheet(name);
                 });
                 container.appendChild(chip);
             });
-            container.style.display = 'flex';
+            wrapper.style.display = '';
+            container.classList.add('collapsed');
 
-            // 恢复上次选择
+            requestAnimationFrame(() => {
+                if (container.scrollHeight > container.clientHeight + 2) {
+                    expandRow.style.display = '';
+                } else {
+                    expandRow.style.display = 'none';
+                }
+            });
+
             if (lastSheetName && sheetNames.includes(lastSheetName)) {
                 const prev = container.querySelector(`[data-sheet="${CSS.escape(lastSheetName)}"]`);
                 if (prev) {
@@ -3352,7 +3365,6 @@
                     return;
                 }
             }
-            // 无上次记录：自动选第一个
             if (sheetNames.length === 1) {
                 requestAnimationFrame(() => {
                     const chip = container.querySelector('mdui-chip');
@@ -3363,32 +3375,46 @@
 
         function showParsed(fileName) {
             currentFileName = fileName;
+            dataLoaded = true;
             $('psDropZone').style.display = 'none';
+            $('psDownloadSection').style.display = 'none';
             $('psBottomBar').style.display = 'flex';
             $('psFileName').textContent = fileName;
-            $('psSearchInput').style.display = '';
+            $('psSearchBar').style.display = '';
             $('psResultsList').style.display = '';
+            $('psCachedBadge').style.display = poolDownloaded ? '' : 'none';
 
             renderSheetChips();
-            $('psSearchInput').placeholder = '输入型号/名称模糊搜索';
             $('psResultsList').innerHTML = '<div style="padding:50px 20px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="table_chart" style="font-size:36px;opacity:0.3;display:block;margin:0 auto 6px;"></mdui-icon>请选择一个工作表开始搜索</div>';
         }
 
         function showDropZone() {
-            const els = { si: $('psSearchInput'), sc: $('psSheetChips'), ss: $('psSearchStatus'), bb: $('psBottomBar'), dz: $('psDropZone'), rl: $('psResultsList') };
-            if (els.si) { els.si.style.display = 'none'; els.si.disabled = true; }
-            if (els.sc) { els.sc.style.display = 'none'; els.sc.innerHTML = ''; }
-            if (els.ss) els.ss.style.display = 'none';
-            if (els.bb) els.bb.style.display = 'none';
-            if (els.dz) els.dz.style.display = '';
-            if (els.rl) {
-                els.rl.style.display = '';
-                els.rl.innerHTML = '<div style="padding:50px 20px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="upload_file" style="font-size:42px;opacity:0.35;display:block;margin:0 auto 8px;"></mdui-icon>请先上传 Excel 文件</div>';
+            const searchBar = $('psSearchBar');
+            const si = $('psSearchInput');
+            const scWrap = $('psSheetChipsWrap');
+            const ss = $('psSearchStatus');
+            const bb = $('psBottomBar');
+            const dz = $('psDropZone');
+            const rl = $('psResultsList');
+            const ds = $('psDownloadSection');
+
+            if (searchBar) searchBar.style.display = 'none';
+            if (si) { si.disabled = true; si.value = ''; }
+            if (scWrap) { scWrap.style.display = 'none'; $('psSheetChips').innerHTML = ''; }
+            if (ss) ss.style.display = 'none';
+            if (bb) bb.style.display = 'none';
+            if (dz) dz.style.display = '';
+            if (ds) ds.style.display = 'none';
+            if (rl) {
+                rl.style.display = '';
+                rl.innerHTML = '<div style="padding:50px 20px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="upload_file" style="font-size:42px;opacity:0.35;display:block;margin:0 auto 8px;"></mdui-icon>请先上传 Excel 文件</div>';
             }
             currentItems = [];
             fuseInstance = null;
             allSheetData = {};
             sheetNames = [];
+            dataLoaded = false;
+            poolDownloaded = false;
         }
 
         function handleFile(file, handle) {
@@ -3396,6 +3422,7 @@
                 savedHandle = handle;
                 saveHandleToDB(handle);
             }
+            poolDownloaded = false;
 
             $('psResultsList').innerHTML = '<div class="ps-loading-box"><mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>正在解析 Excel...</span></div>';
 
@@ -3605,32 +3632,104 @@
 
         async function open() {
             $('productSearchDialog').open = true;
-            showDropZone();
             try { await ensureLibs(); } catch (e) { addLog('依赖库加载失败: ' + e.message, 'error'); }
 
-            // 1) 优先尝试配置的商品池 URL
             const poolUrl = (state.productPoolPath || '').trim();
+
+            if (dataLoaded && sheetNames.length > 0) {
+                showParsed(currentFileName);
+                return;
+            }
+
             if (poolUrl && /^https?:\/\//i.test(poolUrl)) {
-                addLog('正在从配置 URL 加载商品池: ' + poolUrl, 'info');
+                showDownloadUI();
+                addLog('正在下载商品池: ' + poolUrl, 'info');
                 try {
-                    const resp = await fetch(poolUrl);
-                    if (resp.ok) {
-                        const buf = await resp.arrayBuffer();
-                        const fileName = poolUrl.split('/').pop().split('?')[0] || 'products.xlsx';
-                        handleFile(new File([buf], fileName), null);
-                        return;
-                    }
-                    addLog('商品池 URL 返回: ' + resp.status, 'warn');
+                    const arrayBuf = await downloadPoolWithProgress(poolUrl);
+                    const fileName = poolUrl.split('/').pop().split('?')[0] || 'products.xlsx';
+                    hideDownloadUI();
+                    await parseFile(new File([arrayBuf], fileName));
+                    poolDownloaded = true;
+                    showParsed(fileName);
+                    addLog('商品池下载并解析成功: ' + fileName, 'info');
+                    return;
                 } catch (e) {
-                    addLog('云端商品池加载失败: ' + e.message, 'warn');
+                    hideDownloadUI();
+                    addLog('商品池下载失败: ' + e.message, 'error');
+                    showSnackbar({ message: '商品池下载失败，可手动上传文件' });
                 }
             }
 
-            // 2) 尝试 FSA IndexedDB 恢复
+            showDropZone();
             const recovered = await tryRecoverSavedFile();
             if (recovered) {
                 handleFile(recovered, savedHandle);
             }
+        }
+
+        function showDownloadUI() {
+            $('psDownloadSection').style.display = 'flex';
+            $('psDropZone').style.display = 'none';
+            $('psSearchBar').style.display = 'none';
+            $('psSheetChipsWrap').style.display = 'none';
+            $('psSearchStatus').style.display = 'none';
+            $('psBottomBar').style.display = 'none';
+            $('psResultsList').style.display = 'none';
+            $('psResultsList').innerHTML = '';
+            $('psDownloadProgress').value = 0;
+            $('psDownloadStatus').textContent = '准备下载...';
+        }
+
+        function hideDownloadUI() {
+            $('psDownloadSection').style.display = 'none';
+        }
+
+        async function downloadPoolWithProgress(url) {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open('GET', url, true);
+                xhr.responseType = 'arraybuffer';
+                xhr.timeout = 60000;
+
+                xhr.onprogress = (e) => {
+                    if (e.lengthComputable) {
+                        const pct = e.loaded / e.total;
+                        $('psDownloadProgress').value = pct;
+                        const loadedKB = (e.loaded / 1024).toFixed(0);
+                        const totalKB = (e.total / 1024).toFixed(0);
+                        $('psDownloadStatus').textContent = `下载中 ${loadedKB} / ${totalKB} KB (${Math.round(pct * 100)}%)`;
+                    } else {
+                        $('psDownloadStatus').textContent = `已下载 ${(e.loaded / 1024).toFixed(0)} KB...`;
+                    }
+                };
+
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        $('psDownloadProgress').value = 1;
+                        $('psDownloadStatus').textContent = '下载完成，正在解析...';
+                        resolve(xhr.response);
+                    } else {
+                        reject(new Error('HTTP ' + xhr.status));
+                    }
+                };
+
+                xhr.onerror = () => reject(new Error('网络错误'));
+                xhr.ontimeout = () => reject(new Error('请求超时'));
+                xhr.send();
+            });
+        }
+
+        function resetCache() {
+            dataLoaded = false;
+            poolDownloaded = false;
+            sheetNames = [];
+            allSheetData = {};
+            allSheetHeaders = {};
+            currentItems = [];
+            fuseInstance = null;
+            currentSheet = '';
+            lastSheetName = '';
+            currentFileName = '';
         }
 
         function init() {
@@ -3688,12 +3787,33 @@
             });
 
             $('psSearchInput').addEventListener('input', () => {
+                const val = $('psSearchInput').value.trim();
+                $('psSearchClearBtn').style.display = val ? '' : 'none';
                 clearTimeout(searchTimer);
-                searchTimer = setTimeout(() => doSearch($('psSearchInput').value.trim()), 200);
+                searchTimer = setTimeout(() => doSearch(val), 200);
+            });
+
+            $('psSearchClearBtn').addEventListener('click', () => {
+                $('psSearchInput').value = '';
+                $('psSearchClearBtn').style.display = 'none';
+                doSearch('');
+                $('psSearchInput').focus();
+            });
+
+            $('psChipExpandBtn').addEventListener('click', () => {
+                const chips = $('psSheetChips');
+                const btn = $('psChipExpandBtn');
+                if (chips.classList.contains('collapsed')) {
+                    chips.classList.remove('collapsed');
+                    btn.textContent = '收起';
+                } else {
+                    chips.classList.add('collapsed');
+                    btn.textContent = '展开工作表';
+                }
             });
         }
 
-        return { open, init };
+        return { open, init, resetCache };
     })();
 
     function bindEventListeners() {
@@ -3704,7 +3824,10 @@
         document.getElementById('displayShopName').addEventListener('click', openShopMenu);
         document.getElementById('orderListBtn').addEventListener('click', openOrderDrawer);
         document.getElementById('configBtn').addEventListener('click', openConfigDialog);
-        document.getElementById('refreshTokenBtn').addEventListener('click', autoLogin);
+        document.getElementById('refreshTokenBtn').addEventListener('click', () => {
+            ProductSearch.resetCache();
+            autoLogin();
+        });
         document.getElementById('closeDrawerBtn').addEventListener('click', () => {
             document.getElementById('orderDrawer').open = false;
         });
