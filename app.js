@@ -3197,6 +3197,50 @@
         document.querySelector('#detailAddress').value = addr;
     }
 
+    // ==================== 商品池文件缓存（IndexedDB） ====================
+    const POOL_CACHE_DB = 'ProductPoolCache';
+    const POOL_CACHE_STORE = 'blobs';
+
+    function openPoolCacheDB() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(POOL_CACHE_DB, 1);
+            req.onupgradeneeded = () => {
+                req.result.createObjectStore(POOL_CACHE_STORE, { keyPath: 'url' });
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    async function loadCachedPoolBlob(url) {
+        try {
+            const db = await openPoolCacheDB();
+            const tx = db.transaction(POOL_CACHE_STORE, 'readonly');
+            const store = tx.objectStore(POOL_CACHE_STORE);
+            const result = await new Promise((resolve, reject) => {
+                const req = store.get(url);
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+            db.close();
+            return result ? result.blob : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async function savePoolBlobToCache(url, blob) {
+        try {
+            const db = await openPoolCacheDB();
+            const tx = db.transaction(POOL_CACHE_STORE, 'readwrite');
+            tx.objectStore(POOL_CACHE_STORE).put({ url, blob, timestamp: Date.now() });
+            await new Promise(resolve => { tx.oncomplete = resolve; });
+            db.close();
+        } catch (e) {
+            addLog('缓存商品池失败: ' + e.message, 'warn');
+        }
+    }
+
     // ==================== 商品 Excel 搜索模块 ====================
     const ProductSearch = (() => {
         let allSheetData = {};
@@ -3671,6 +3715,17 @@
             }
 
             if (poolUrl && /^https?:\/\//i.test(poolUrl)) {
+                // 尝试从 IndexedDB 缓存读取
+                const cachedBlob = await loadCachedPoolBlob(poolUrl);
+                if (cachedBlob) {
+                    const fileName = poolUrl.split('/').pop().split('?')[0] || 'products.xlsx';
+                    addLog('使用缓存的商品池: ' + fileName, 'info');
+                    await parseFile(new File([cachedBlob], fileName));
+                    poolDownloaded = true;
+                    showParsed(fileName);
+                    return;
+                }
+
                 showDownloadUI();
                 addLog('正在下载商品池: ' + poolUrl, 'info');
                 try {
@@ -3681,6 +3736,8 @@
                     poolDownloaded = true;
                     showParsed(fileName);
                     addLog('商品池下载并解析成功: ' + fileName, 'info');
+                    // 后台缓存下载的文件，不阻塞 UI
+                    savePoolBlobToCache(poolUrl, new Blob([arrayBuf]));
                     return;
                 } catch (e) {
                     hideDownloadUI();
@@ -3910,6 +3967,79 @@
             } catch (e) {
                 if (e.name !== 'AbortError') addLog('文件选择失败: ' + e.message, 'error');
             }
+        });
+
+        document.getElementById('configPoolDownloadBtn').addEventListener('click', async () => {
+            const url = document.getElementById('configProductPool').value.trim();
+            if (!url || !/^https?:\/\//i.test(url)) {
+                return showSnackbar({ message: '请先输入有效的云端 URL 地址' });
+            }
+
+            const dialog = document.getElementById('poolDownloadDialog');
+            const progress = document.getElementById('poolDlProgress');
+            const status = document.getElementById('poolDlStatus');
+            const closeBtn = document.getElementById('poolDlCloseBtn');
+
+            progress.value = 0;
+            status.textContent = '准备下载...';
+            closeBtn.disabled = true;
+            dialog.open = true;
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', url, true);
+            xhr.responseType = 'arraybuffer';
+            xhr.timeout = 60000;
+
+            xhr.onprogress = (e) => {
+                if (e.lengthComputable) {
+                    const pct = e.loaded / e.total;
+                    progress.value = pct;
+                    const loadedKB = (e.loaded / 1024).toFixed(0);
+                    const totalKB = (e.total / 1024).toFixed(0);
+                    status.textContent = `下载中 ${loadedKB} / ${totalKB} KB (${Math.round(pct * 100)}%)`;
+                } else {
+                    status.textContent = `已下载 ${(e.loaded / 1024).toFixed(0)} KB...`;
+                }
+            };
+
+            xhr.onload = async () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    progress.value = 1;
+                    status.textContent = '下载成功，正在缓存...';
+                    try {
+                        await savePoolBlobToCache(url, new Blob([xhr.response]));
+                        ProductSearch.resetCache();
+                        status.textContent = '下载成功，已更新缓存';
+                        addLog('手动下载商品池成功: ' + url, 'info');
+                        showSnackbar({ message: '商品池下载并缓存成功' });
+                    } catch (e) {
+                        status.textContent = '缓存失败: ' + e.message;
+                        addLog('商品池缓存失败: ' + e.message, 'warn');
+                    }
+                } else {
+                    status.textContent = '下载失败: HTTP ' + xhr.status;
+                    addLog('商品池下载失败: HTTP ' + xhr.status, 'error');
+                }
+                closeBtn.disabled = false;
+            };
+
+            xhr.onerror = () => {
+                status.textContent = '下载失败: 网络错误';
+                closeBtn.disabled = false;
+                addLog('商品池下载网络错误', 'error');
+            };
+
+            xhr.ontimeout = () => {
+                status.textContent = '下载失败: 请求超时';
+                closeBtn.disabled = false;
+                addLog('商品池下载超时', 'error');
+            };
+
+            xhr.send();
+        });
+
+        document.getElementById('poolDlCloseBtn').addEventListener('click', () => {
+            document.getElementById('poolDownloadDialog').open = false;
         });
 
         document.getElementById('closeErrorDialogBtn').addEventListener('click', () => {

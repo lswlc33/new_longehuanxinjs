@@ -185,8 +185,10 @@
             <mdui-text-field id="configProductPool" label="商品池路径 (可为本地文件或云端URL)" variant="outlined" clearable
                 placeholder="https://example.com/products.xlsx 或留空手动拖拽上传"
                 style="margin-bottom: 12px;"></mdui-text-field>
-            <mdui-button id="configPoolBrowseBtn" variant="tonal" icon="folder_open" size="small"
-                style="margin-bottom: 4px;">选择本地文件</mdui-button>
+            <div style="display:flex; gap:8px; margin-bottom:4px;">
+                <mdui-button id="configPoolBrowseBtn" variant="tonal" icon="folder_open" size="small">选择本地文件</mdui-button>
+                <mdui-button id="configPoolDownloadBtn" variant="tonal" icon="cloud_download" size="small">下载/更新</mdui-button>
+            </div>
 
             <div
                 style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
@@ -443,6 +445,15 @@
             </div>
         </div>
         <mdui-button id="psCloseBtn" slot="action" variant="text">关闭</mdui-button>
+    </mdui-dialog>
+
+    <mdui-dialog id="poolDownloadDialog" close-on-overlay-click style="width:380px;">
+        <span slot="headline">下载商品池</span>
+        <div style="display:flex; flex-direction:column; align-items:center; gap:16px; padding:16px 0;">
+            <mdui-linear-progress id="poolDlProgress" style="width:100%;"></mdui-linear-progress>
+            <span id="poolDlStatus" style="font-size:13px; color:rgb(var(--mdui-color-outline));">准备下载...</span>
+        </div>
+        <mdui-button id="poolDlCloseBtn" slot="action" variant="filled">关闭</mdui-button>
     </mdui-dialog>
 
 </body>

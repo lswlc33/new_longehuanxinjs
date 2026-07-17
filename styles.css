@@ -1,6 +1,7 @@
 :root {
     --mdui-color-background-dark: 54, 52, 59;
     --mdui-color-background-light: 230 224 233;
+    --mdui-shape-corner-extra-small: 0.75rem;
 }
 
 html,
@@ -21,6 +22,7 @@ body {
     flex-direction: column;
     align-items: center;
 }
+
 
 * {
     scrollbar-width: thin;
@@ -723,9 +725,19 @@ mdui-snackbar {
 }
 
 @keyframes cardFlipIn {
-    0% { transform: perspective(600px) rotateX(-15deg); opacity: 0.4; }
-    60% { transform: perspective(600px) rotateX(3deg); }
-    100% { transform: perspective(600px) rotateX(0deg); opacity: 1; }
+    0% {
+        transform: perspective(600px) rotateX(-15deg);
+        opacity: 0.4;
+    }
+
+    60% {
+        transform: perspective(600px) rotateX(3deg);
+    }
+
+    100% {
+        transform: perspective(600px) rotateX(0deg);
+        opacity: 1;
+    }
 }
 
 .huanxin-loading {
@@ -1149,10 +1161,12 @@ mdui-snackbar {
     gap: 6px;
     transition: max-height 0.25s ease;
 }
+
 .ps-sheet-chips.collapsed {
     max-height: 36px;
     overflow: hidden;
 }
+
 .ps-sheet-chips mdui-chip {
     flex-shrink: 0;
 }
@@ -1175,15 +1189,18 @@ mdui-snackbar {
     transition: border-color 0.2s;
     flex-shrink: 0;
 }
+
 .ps-search-bar:focus-within {
     border-color: rgb(var(--mdui-color-primary));
     box-shadow: 0 0 0 1px rgba(var(--mdui-color-primary), 0.2);
 }
+
 .ps-search-svg {
     flex-shrink: 0;
     margin-left: 10px;
     color: rgb(var(--mdui-color-outline));
 }
+
 .ps-search-input {
     flex: 1;
     min-width: 0;
@@ -1196,9 +1213,11 @@ mdui-snackbar {
     color: rgb(var(--mdui-color-on-surface));
     outline: none;
 }
+
 .ps-search-input::placeholder {
     color: rgb(var(--mdui-color-outline));
 }
+
 .ps-search-clear {
     flex-shrink: 0;
     width: 28px;
@@ -1215,6 +1234,7 @@ mdui-snackbar {
     justify-content: center;
     transition: background 0.15s;
 }
+
 .ps-search-clear:hover {
     background: rgba(0, 0, 0, 0.06);
 }
@@ -1273,8 +1293,14 @@ mdui-snackbar {
     transition: background 0.15s;
     gap: 8px;
 }
-.ps-result-row:hover { background: rgba(var(--mdui-color-primary), 0.06); }
-.ps-result-row:last-child { border-bottom: none; }
+
+.ps-result-row:hover {
+    background: rgba(var(--mdui-color-primary), 0.06);
+}
+
+.ps-result-row:last-child {
+    border-bottom: none;
+}
 
 .ps-result-left {
     display: flex;
@@ -1283,6 +1309,7 @@ mdui-snackbar {
     min-width: 0;
     flex: 1;
 }
+
 .ps-result-name {
     font-size: 13px;
     font-weight: 500;
@@ -1291,12 +1318,14 @@ mdui-snackbar {
     overflow: hidden;
     text-overflow: ellipsis;
 }
+
 .ps-result-meta {
     font-size: 11px;
     color: rgb(var(--mdui-color-outline));
     display: flex;
     gap: 6px;
 }
+
 .ps-result-price {
     font-size: 14px;
     font-weight: 700;
@@ -1304,6 +1333,7 @@ mdui-snackbar {
     white-space: nowrap;
     flex-shrink: 0;
 }
+
 .ps-loading-box {
     display: flex;
     align-items: center;
