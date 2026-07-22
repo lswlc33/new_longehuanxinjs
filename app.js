@@ -2701,6 +2701,15 @@
         try {
             const res = await _pendingGoodsQuery;
             if (res?.code === 0 && res.data) {
+                if (res.data.id == null) {
+                    addLog(`商品[${code}]未备案或已吊销`, "error");
+                    showError(`商品未备案或已吊销`);
+                    document.querySelector('#goodsCode').dataset.goodsName = "";
+                    document.querySelector('#filingPrice').value = "";
+                    document.querySelector('#shopPrice').value = "";
+                    renderRecentGoodsSelect("");
+                    return;
+                }
                 document.querySelector('#goodsCode').dataset.goodsName = res.data.goodsName;
                 saveRecentGoods(code, res.data.goodsName);
                 document.querySelector('#filingPrice').value = res.data.subsidyBackPrice;
@@ -3637,40 +3646,12 @@
 
         function importProduct(item) {
             const codeEl = $('goodsCode');
-            const filingEl = $('filingPrice');
             const goodsCode = findField(item, ['企业商品编号', '商品编号', '编号', 'goodsCode', '编码']);
-            const goodsName = findField(item, ['商品名称', '名称', 'goodsName', '品名']);
-            const filingPrice = findField(item, ['备案价', 'filingPrice']);
-            const categoryType = findField(item, ['商品类型', '商品品类', '品类', '类型']);
 
             codeEl.value = goodsCode;
-            codeEl.dataset.goodsName = goodsName;
-            filingEl.value = filingPrice;
-
-            // 根据备案价自动填充门店单价（与 queryGoodsInfo 逻辑一致）
-            const price = parseFloat(filingPrice);
-            if (!isNaN(price) && price > 0) {
-                const shopEl = $('shopPrice');
-                if (price > 10000) {
-                    const maxFloat = Math.min(price - 10000, 1000);
-                    const float = Math.floor(Math.random() * (maxFloat + 1));
-                    shopEl.value = formatPrice(10000 + float);
-                } else {
-                    shopEl.value = filingPrice;
-                }
-            }
-
-            // 根据商品类型自动选中品类 chip
-            if (categoryType) selectCategoryChip(categoryType);
-
-            if (typeof saveRecentGoods === 'function') saveRecentGoods(goodsCode, goodsName);
-            if (typeof calcPrice === 'function') calcPrice();
-            addLog('已导入: ' + goodsName + ' [' + goodsCode + ']' + (categoryType ? ' 品类: ' + categoryType : ''), 'info');
-
-            if (window.mdui && mdui.snackbar) {
-                mdui.snackbar({ message: '已导入: ' + goodsName, placement: 'bottom', autoCloseDelay: 1500 });
-            }
             $('productSearchDialog').open = false;
+
+            setTimeout(() => queryGoodsInfo(), 100);
         }
 
         let searchTimer = null;
