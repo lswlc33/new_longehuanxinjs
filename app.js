@@ -3561,12 +3561,40 @@
                 distance: 100,
                 minMatchCharLength: 1,
                 includeScore: true,
+                includeMatches: true,
                 findAllMatches: true,
                 ignoreLocation: true
             });
 
             renderResults(currentItems.slice(0, 30));
             $('psMatchCount').textContent = String(currentItems.length);
+        }
+
+        function highlightText(text, query) {
+            if (!text || !query) return escapeHtml(text || '');
+            const tokens = query.trim().split(/\s+/).filter(Boolean);
+            if (!tokens.length) return escapeHtml(text);
+            const pattern = tokens.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+            const re = new RegExp('(' + pattern + ')', 'gi');
+            return escapeHtml(text).replace(re, '<mark class="ps-highlight">$1</mark>');
+        }
+
+        function matchPercent(query, codeField, nameField) {
+            if (!query) return null;
+            const q = query.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (!q.length) return null;
+            let best = 0;
+            for (const field of [codeField, nameField]) {
+                if (!field) continue;
+                const t = field.toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (!t.length) continue;
+                for (let s = 0; s < t.length; s++) {
+                    let i = 0;
+                    while (s + i < t.length && i < q.length && t[s + i] === q[i]) i++;
+                    if (i > best) best = i;
+                }
+            }
+            return Math.round((best / q.length) * 100) || null;
         }
 
         function renderResults(items) {
@@ -3579,22 +3607,37 @@
             }
             $('psMatchCount').textContent = String(items.length);
             const maxShow = 30;
-            items.slice(0, maxShow).forEach(item => {
+            const query = $('psSearchInput') ? $('psSearchInput').value : '';
+            items.slice(0, maxShow).forEach(r => {
+                const item = r.item || r;
                 const codeField = findField(item, ['企业商品编号', '商品编号', '编号', 'goodsCode', '条码', '编码']);
                 const nameField = findField(item, ['商品名称', '名称', 'goodsName', '品名']);
                 const typeField = findField(item, ['商品类型']);
                 const priceField = findField(item, ['备案价', '价格', 'filingPrice']);
 
+                let scoreHtml = '';
+                if (query) {
+                    const pct = matchPercent(query, codeField, nameField);
+                    if (pct != null) {
+                        const cls = pct >= 80 ? 'ps-score-high' : pct >= 50 ? 'ps-score-mid' : 'ps-score-low';
+                        scoreHtml = '<span class="ps-score-badge ' + cls + '">' + pct + '%</span>';
+                    }
+                }
+
+                const nameHtml = query ? highlightText(nameField, query) : escapeHtml(nameField);
+                const codeHtml = query ? highlightText(codeField, query) : escapeHtml(codeField);
+
                 const row = document.createElement('div');
                 row.className = 'ps-result-row';
                 row.innerHTML =
                     '<div class="ps-result-left">' +
-                        '<span class="ps-result-name">' + escapeHtml(nameField) + '</span>' +
+                        '<span class="ps-result-name">' + nameHtml + '</span>' +
                         '<span class="ps-result-meta">' +
-                            '<span>' + escapeHtml(codeField) + '</span>' +
+                            '<span>' + codeHtml + '</span>' +
                             (typeField ? '<span>' + escapeHtml(typeField) + '</span>' : '') +
                         '</span>' +
                     '</div>' +
+                    scoreHtml +
                     '<span class="ps-result-price">¥' + escapeHtml(priceField || '-') + '</span>';
                 row.addEventListener('click', () => importProduct(item));
                 list.appendChild(row);
@@ -3656,21 +3699,33 @@
 
         let searchTimer = null;
         function doSearch(q) {
-            if (!q || !currentItems.length) { renderResults(currentItems.slice(0, 30)); return; }
+            if (!q || !currentItems.length) {
+                renderResults(currentItems.slice(0, 30).map(item => ({ item, score: null })));
+                return;
+            }
 
             const tokens = q.trim().split(/\s+/).filter(Boolean);
-            if (!tokens.length) { renderResults(currentItems.slice(0, 30)); return; }
+            if (!tokens.length) {
+                renderResults(currentItems.slice(0, 30).map(item => ({ item, score: null })));
+                return;
+            }
 
             if (fuseInstance) {
                 if (tokens.length === 1) {
-                    renderResults(fuseInstance.search(tokens[0]).map(r => r.item));
+                    renderResults(fuseInstance.search(tokens[0]));
                 } else {
-                    const resultsPerToken = tokens.map(t =>
-                        new Set(fuseInstance.search(t).map(r => r.item))
+                    const resultsPerToken = tokens.map(t => fuseInstance.search(t));
+                    const intersection = resultsPerToken[0].filter(r =>
+                        resultsPerToken.slice(1).every(arr => arr.some(r2 => r2.item === r.item))
                     );
-                    const intersection = [...resultsPerToken[0]].filter(item =>
-                        resultsPerToken.slice(1).every(s => s.has(item))
-                    );
+                    intersection.forEach(r => {
+                        const bestScores = resultsPerToken
+                            .map(arr => arr.find(r2 => r2.item === r.item))
+                            .filter(Boolean)
+                            .map(r2 => r2.score);
+                        r.score = Math.min(...bestScores);
+                    });
+                    intersection.sort((a, b) => a.score - b.score);
                     renderResults(intersection);
                 }
             } else {
@@ -3679,7 +3734,7 @@
                         const lt = tok.toLowerCase();
                         return Object.values(item).some(v => String(v || '').toLowerCase().includes(lt));
                     })
-                );
+                ).map(item => ({ item, score: null }));
                 renderResults(matched);
             }
         }
@@ -3696,6 +3751,15 @@
             }
 
             if (poolUrl && /^https?:\/\//i.test(poolUrl)) {
+                // 先显示加载状态，避免用户以为卡住了
+                $('psResultsList').innerHTML = '<div class="ps-loading-box"><mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>正在加载商品池...</span></div>';
+                $('psDropZone').style.display = 'none';
+                $('psDownloadSection').style.display = 'none';
+                $('psSearchBar').style.display = 'none';
+                $('psSheetChipsWrap').style.display = 'none';
+                $('psSearchStatus').style.display = 'none';
+                $('psBottomBar').style.display = 'none';
+
                 // 尝试从 IndexedDB 缓存读取
                 const cachedBlob = await loadCachedPoolBlob(poolUrl);
                 if (cachedBlob) {

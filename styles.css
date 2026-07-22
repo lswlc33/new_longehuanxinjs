@@ -1334,6 +1334,39 @@ mdui-snackbar {
     flex-shrink: 0;
 }
 
+.ps-highlight {
+    background: rgba(var(--mdui-color-primary), 0.18);
+    color: rgb(var(--mdui-color-primary));
+    border-radius: 2px;
+    padding: 0 1px;
+    font-weight: 600;
+}
+
+.ps-score-badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 8px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    line-height: 1.5;
+}
+
+.ps-score-high {
+    background: rgba(var(--mdui-color-primary), 0.12);
+    color: rgb(var(--mdui-color-primary));
+}
+
+.ps-score-mid {
+    background: rgba(var(--mdui-color-tertiary), 0.12);
+    color: rgb(var(--mdui-color-tertiary));
+}
+
+.ps-score-low {
+    background: rgba(var(--mdui-color-outline), 0.1);
+    color: rgb(var(--mdui-color-outline));
+}
+
 .ps-loading-box {
     display: flex;
     align-items: center;
