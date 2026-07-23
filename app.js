@@ -25,6 +25,7 @@
         VERSION_CLICK_THRESHOLD: 5,
         VERSION_CLICK_TIMEOUT: 1200,
         CACHED_VERSION_KEY: "APP_CACHED_VERSION",
+        VERSION_POLL_INTERVAL: 30 * 60 * 1000,
         DRAFTS_KEY: "ORDER_DRAFTS_V1",
         DRAFTS_TTL_MS: 7 * 24 * 60 * 60 * 1000
     };
@@ -794,7 +795,9 @@
         }
     }
 
-    async function autoUpdateVersion() {
+    let _versionPollTimer = null;
+
+    async function autoUpdateVersion(fromPolling) {
         const baseUrl = `https://api.github.com/repos/lswlc33/new_longehuanxinjs/commits`;
 
         try {
@@ -804,7 +807,7 @@
 
             if (!Array.isArray(lastOneData) || lastOneData.length === 0) {
                 addLog("未发现提交记录，跳过版本更新", "warn");
-                return;
+                return false;
             }
 
             const latestFullDate = lastOneData[0].commit.author.date;
@@ -838,16 +841,45 @@
             }
 
             const cachedVersion = localStorage.getItem(CONSTANTS.CACHED_VERSION_KEY) || "";
-            if (cachedVersion && cachedVersion !== finalVersion) {
+            const versionChanged = cachedVersion && cachedVersion !== finalVersion;
+
+            if (versionChanged) {
                 addLog(`版本变更: ${cachedVersion} -> ${finalVersion}，获取更新日志`, "info");
-                await fetchAndShowChangelog(latestDay, cachedVersion);
+                if (fromPolling) {
+                    showSnackbar({
+                        message: `新版本 ${finalVersion} 已发布，请刷新页面`,
+                        action: "刷新",
+                        onAction: () => location.reload(),
+                        closeable: true
+                    });
+                } else {
+                    await fetchAndShowChangelog(latestDay, cachedVersion);
+                }
             }
             localStorage.setItem(CONSTANTS.CACHED_VERSION_KEY, finalVersion);
+
+            return versionChanged;
 
         } catch (error) {
             addLog(`同步版本号失败: ${error.message}`, "warn");
             console.error("Version Sync Error:", error);
+            return false;
         }
+    }
+
+    async function checkVersionAndPoll() {
+        await autoUpdateVersion(true);
+        scheduleNextVersionPoll();
+    }
+
+    function scheduleNextVersionPoll() {
+        clearTimeout(_versionPollTimer);
+        _versionPollTimer = setTimeout(checkVersionAndPoll, CONSTANTS.VERSION_POLL_INTERVAL);
+    }
+
+    function stopVersionPolling() {
+        clearTimeout(_versionPollTimer);
+        _versionPollTimer = null;
     }
 
     async function fetchAndShowChangelog(latestDay, oldVersion) {
@@ -1483,6 +1515,35 @@
             address,
             `商品：${goodsText}`,
             `实付：${actualPrice}`
+        ].join("\n");
+    }
+
+    function buildDingTalkRefundMessage(data) {
+        const payOrder = data.payOrder;
+        const refundOrderVo = data.refundOrderVos?.[0];
+        const refundOrder = refundOrderVo?.buyerRefundOrder;
+        const refundGoods = refundOrderVo?.refundGoodsOrderList?.[0];
+
+        const buyerName = refundOrder?.buyerName || payOrder?.buyerName || "";
+        const buyerMobile = refundOrder?.buyerMobile || payOrder?.buyerMobile || "";
+        const address = payOrder?.address || "";
+        const goodsText = refundGoods?.goodsName || payOrder?.goodsOrderList?.[0]?.goodsName || "";
+        const refundAmount = formatPriceText(refundOrder?.refundAmount || payOrder?.shopActualPayPrice || 0);
+        const payTime = payOrder?.payTime || "";
+        const refundTime = refundOrder?.updateTime || "";
+
+        return [
+            "订单发生了退款操作！",
+            "",
+            "建行单号：",
+            payOrder?.ccbPayOrderNumber || "",
+            `门店单号：${payOrder?.shopOrderNumber || ""}`,
+            `支付时间，退款时间：${payTime} ${refundTime}`,
+            "用户信息：",
+            `${buyerName} ${buyerMobile}`.trim(),
+            address,
+            `商品：${goodsText}`,
+            `金额：${refundAmount}`
         ].join("\n");
     }
 
@@ -2398,6 +2459,14 @@
         if (res?.code === 0) {
             addLog("退款请求已接受", "info");
             showSnackbar({ message: "退款成功" });
+
+            const detailRes = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber: state.orderToRefund });
+            if (detailRes?.code === 0 && detailRes.data) {
+                addLog("获取退款详情成功，准备发起钉钉推送", "info");
+                const msg = buildDingTalkRefundMessage(detailRes.data);
+                await sendDingTalkMessage(msg);
+            }
+
             fetchOrders();
         } else {
             addLog(`退款请求失败: ${res?.msg}`, "error");
@@ -4291,6 +4360,7 @@
         cleanupExpiredDrafts();
         bindLifecycleRecoveryEvents();
         autoUpdateVersion();
+        scheduleNextVersionPoll();
         loadRecentGoods();
 
         state.dingTalkWebhook = localStorage.getItem(CONSTANTS.DINGTALK_WEBHOOK_KEY) || "";
