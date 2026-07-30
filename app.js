@@ -86,7 +86,8 @@
         orderHasMore: false,
         orderLoadingMore: false,
         orderSearchResults: [],
-        orderSubStates: null
+        orderSubStates: null,
+        _isRefreshingToken: false
     };
 
     const els = {};
@@ -663,6 +664,57 @@
         saveOrderPushSentMap();
     }
 
+    const _TOKEN_ERROR_KEYWORDS = ['token', '登录', '过期', '无效', '失效', '未登录'];
+
+    function _isTokenError(res) {
+        if (!res || res.code === 0) return false;
+        if (res.code === 401) return true;
+        const msg = (res.msg || '').toLowerCase();
+        return _TOKEN_ERROR_KEYWORDS.some(kw => msg.includes(kw));
+    }
+
+    async function _refreshTokenAndRetry(endpoint, method, data, oldToken) {
+        if (state._isRefreshingToken) return null;
+        state._isRefreshingToken = true;
+        addLog(`Token 失效，自动刷新中...`, "warn");
+
+        const payload = state.loginPayload || "";
+        const tokenRes = payload ? await requestTokenByPayload(payload) : null;
+
+        state._isRefreshingToken = false;
+
+        if (tokenRes?.code === 0 && tokenRes.data) {
+            addLog(`Token 刷新成功，重试请求 [${endpoint}]`, "info");
+            state.currentToken = tokenRes.data;
+            await checkTokenStatus();
+
+            const headers = { "Content-Type": "application/json" };
+            headers["token"] = state.currentToken;
+            let url = `${CONSTANTS.LONGE_API_BASE}${endpoint}`;
+            const options = { method, headers };
+            if (method === 'GET' && data) {
+                url += `?${new URLSearchParams(data).toString()}`;
+            } else if (method !== 'GET' && data !== null && data !== undefined) {
+                options.body = JSON.stringify(data);
+            }
+            try {
+                const resp = await fetch(url, options);
+                const retryRes = await resp.json();
+                if (retryRes.code !== 0) {
+                    addLog(`API [${endpoint}] 返回业务错误: ${retryRes.msg}`, "warn");
+                }
+                return retryRes;
+            } catch (e) {
+                addLog(`网络请求失败[${endpoint}]: ${e.message}`, "error");
+                return null;
+            }
+        }
+
+        addLog(`Token 刷新失败: ${tokenRes?.msg || '未知错误'}`, "error");
+        showError(`登录已失效，请重新配置`);
+        return null;
+    }
+
     async function callApiWithToken(token, endpoint, method = 'GET', data = null) {
         const headers = {
             "Content-Type": "application/json",
@@ -683,6 +735,10 @@
             const result = await response.json();
             if (result.code !== 0) {
                 addLog(`接口响应异常[${endpoint}]: ${result.msg}`, "warn");
+                if (_isTokenError(result)) {
+                    const retryResult = await _refreshTokenAndRetry(endpoint, method, data, token);
+                    if (retryResult !== null) return retryResult;
+                }
             }
             return result;
         } catch (error) {
@@ -1405,6 +1461,10 @@
             const res = await response.json();
             if (res.code !== 0) {
                 addLog(`API [${endpoint}] 返回业务错误: ${res.msg}`, "warn");
+                if (_isTokenError(res)) {
+                    const retryResult = await _refreshTokenAndRetry(endpoint, method, data, state.currentToken);
+                    if (retryResult !== null) return retryResult;
+                }
             }
             return res;
         } catch (error) {
