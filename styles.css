@@ -1140,43 +1140,6 @@ mdui-snackbar {
     overflow: hidden;
 }
 
-.ps-download-section {
-    display: none;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    padding: 40px 20px;
-    margin: auto;
-}
-
-.ps-download-status {
-    font-size: 12px;
-    color: rgb(var(--mdui-color-outline));
-}
-
-.ps-sheet-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    transition: max-height 0.25s ease;
-}
-
-.ps-sheet-chips.collapsed {
-    max-height: 36px;
-    overflow: hidden;
-}
-
-.ps-sheet-chips mdui-chip {
-    flex-shrink: 0;
-}
-
-.ps-chip-expand-row {
-    text-align: center;
-    margin-top: -4px;
-    margin-bottom: -4px;
-}
-
 .ps-search-bar {
     display: flex;
     align-items: center;
@@ -1248,20 +1211,6 @@ mdui-snackbar {
     min-height: 0;
 }
 
-#psDropZone.drag-over {
-    border-color: rgb(var(--mdui-color-primary)) !important;
-    background: rgba(var(--mdui-color-primary), 0.04);
-}
-
-.ps-drop-zone {
-    border: 2px dashed rgba(var(--mdui-color-outline), 0.3);
-    border-radius: 12px;
-    padding: 28px 16px;
-    text-align: center;
-    cursor: pointer;
-    transition: border-color 0.2s, background 0.2s;
-}
-
 .ps-bottom-bar {
     display: none;
     align-items: center;
@@ -1314,9 +1263,7 @@ mdui-snackbar {
     font-size: 13px;
     font-weight: 500;
     color: rgb(var(--mdui-color-on-surface));
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    word-break: break-all;
 }
 
 .ps-result-meta {
@@ -1375,4 +1322,24 @@ mdui-snackbar {
     gap: 8px;
     color: rgb(var(--mdui-color-outline));
     font-size: 13px;
+}
+
+.ps-result-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+.ps-result-disabled:hover {
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+.ps-disabled-tag {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 4px;
+    background-color: rgb(var(--mdui-color-error-container));
+    color: rgb(var(--mdui-color-on-error-container));
+    vertical-align: middle;
 }

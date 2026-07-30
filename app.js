@@ -15,7 +15,6 @@
         AI_ENDPOINT_KEY: "AI_PARSE_ENDPOINT",
         AI_MODEL_KEY: "AI_PARSE_MODEL",
         AI_KEY_KEY: "AI_PARSE_KEY",
-        PRODUCT_POOL_KEY: "PRODUCT_POOL_PATH",
         ORDER_QUEUE_KEY: "ORDER_QUEUE_BY_STORE_V1",
         ORDER_PUSH_SENT_KEY: "ORDER_PUSH_SENT_V1",
         ORDER_POLL_INTERVAL_MS: 5000,
@@ -27,7 +26,9 @@
         CACHED_VERSION_KEY: "APP_CACHED_VERSION",
         VERSION_POLL_INTERVAL: 30 * 60 * 1000,
         DRAFTS_KEY: "ORDER_DRAFTS_V1",
-        DRAFTS_TTL_MS: 7 * 24 * 60 * 60 * 1000
+        DRAFTS_TTL_MS: 7 * 24 * 60 * 60 * 1000,
+        PASS_GOODS_CACHE_TTL_MS: 24 * 60 * 60 * 1000,
+        PASS_GOODS_COUNT_KEY: "PASS_GOODS_LAST_COUNT"
     };
 
     const payStates = {
@@ -58,7 +59,6 @@
         aiEndpoint: "",
         aiModel: "",
         aiKey: "",
-        productPoolPath: "",
         currentToken: "",
         orderToCancel: "",
         orderToRefund: "",
@@ -87,7 +87,8 @@
         orderLoadingMore: false,
         orderSearchResults: [],
         orderSubStates: null,
-        _isRefreshingToken: false
+        _isRefreshingToken: false,
+        currentUniscid: ""
     };
 
     const els = {};
@@ -1739,6 +1740,11 @@
             addLog("Token 状态校验通过", "info");
             updateStatus(true);
             const shopName = res.data?.shopInfo?.shopName || "";
+            const uniscid = res.data?.shopInfo?.uniscid || "";
+            if (uniscid) {
+                state.currentUniscid = uniscid;
+                addLog(`获取到 uniscid: ${uniscid}`, "info");
+            }
             if (shopName) {
                 els.shopName.innerText = shopName;
                 if (state.storePayloads[state.currentStoreIndex]) {
@@ -1775,7 +1781,6 @@
         document.getElementById('configAiEndpoint').value = state.aiEndpoint;
         document.getElementById('configAiModel').value = state.aiModel;
         document.getElementById('configAiKey').value = state.aiKey;
-        document.getElementById('configProductPool').value = state.productPoolPath;
 
         els.configDialog.open = true;
     }
@@ -1809,7 +1814,6 @@
         state.aiEndpoint = document.getElementById('configAiEndpoint').value.trim();
         state.aiModel = document.getElementById('configAiModel').value.trim();
         state.aiKey = document.getElementById('configAiKey').value.trim();
-        state.productPoolPath = document.getElementById('configProductPool').value.trim();
 
         addLog("用户保存配置并尝试重连", "info");
         persistStorePayloads();
@@ -1820,7 +1824,6 @@
         localStorage.setItem(CONSTANTS.AI_ENDPOINT_KEY, state.aiEndpoint);
         localStorage.setItem(CONSTANTS.AI_MODEL_KEY, state.aiModel);
         localStorage.setItem(CONSTANTS.AI_KEY_KEY, state.aiKey);
-        localStorage.setItem(CONSTANTS.PRODUCT_POOL_KEY, state.productPoolPath);
 
         ProductSearch.resetCache();
 
@@ -1963,10 +1966,6 @@
         const payStateVal = document.getElementById('orderPayStateFilter').value;
         const recordStateVal = document.getElementById('orderRecordStateFilter').value;
         const searchVal = document.getElementById('orderSearchMobile').value.trim();
-
-        if (isFirstPage) {
-            state.orderLastSearchVal = searchVal;
-        }
 
         const baseParams = { tradeMonth, inputStr: searchVal };
         if (recordStateVal !== '') baseParams.recordState = recordStateVal;
@@ -3335,48 +3334,100 @@
         document.querySelector('#detailAddress').value = addr;
     }
 
-    // ==================== 商品池文件缓存（IndexedDB） ====================
-    const POOL_CACHE_DB = 'ProductPoolCache';
-    const POOL_CACHE_STORE = 'blobs';
+    // ==================== passGoodsList API 商品库 ====================
+    const PASS_GOODS_CACHE_DB = 'PassGoodsCache';
+    const PASS_GOODS_CACHE_STORE = 'data';
 
-    function openPoolCacheDB() {
+    function openPassGoodsCacheDB() {
         return new Promise((resolve, reject) => {
-            const req = indexedDB.open(POOL_CACHE_DB, 1);
+            const req = indexedDB.open(PASS_GOODS_CACHE_DB, 1);
             req.onupgradeneeded = () => {
-                req.result.createObjectStore(POOL_CACHE_STORE, { keyPath: 'url' });
+                req.result.createObjectStore(PASS_GOODS_CACHE_STORE, { keyPath: 'uniscid' });
             };
             req.onsuccess = () => resolve(req.result);
             req.onerror = () => reject(req.error);
         });
     }
 
-    async function loadCachedPoolBlob(url) {
+    async function loadPassGoodsCache(uniscid) {
         try {
-            const db = await openPoolCacheDB();
-            const tx = db.transaction(POOL_CACHE_STORE, 'readonly');
-            const store = tx.objectStore(POOL_CACHE_STORE);
+            const db = await openPassGoodsCacheDB();
+            const tx = db.transaction(PASS_GOODS_CACHE_STORE, 'readonly');
             const result = await new Promise((resolve, reject) => {
-                const req = store.get(url);
+                const req = tx.objectStore(PASS_GOODS_CACHE_STORE).get(uniscid);
                 req.onsuccess = () => resolve(req.result);
                 req.onerror = () => reject(req.error);
             });
             db.close();
-            return result ? result.blob : null;
+            return result || null;
         } catch (e) {
             return null;
         }
     }
 
-    async function savePoolBlobToCache(url, blob) {
+    async function savePassGoodsCache(uniscid, data, totalCount) {
         try {
-            const db = await openPoolCacheDB();
-            const tx = db.transaction(POOL_CACHE_STORE, 'readwrite');
-            tx.objectStore(POOL_CACHE_STORE).put({ url, blob, timestamp: Date.now() });
+            const db = await openPassGoodsCacheDB();
+            const tx = db.transaction(PASS_GOODS_CACHE_STORE, 'readwrite');
+            tx.objectStore(PASS_GOODS_CACHE_STORE).put({
+                uniscid,
+                data,
+                totalCount,
+                timestamp: Date.now()
+            });
             await new Promise(resolve => { tx.oncomplete = resolve; });
             db.close();
         } catch (e) {
-            addLog('缓存商品池失败: ' + e.message, 'warn');
+            addLog('缓存商品库失败: ' + e.message, 'warn');
         }
+    }
+
+    async function fetchPassGoodsList(uniscid, onProgress) {
+        if (!uniscid) {
+            addLog('fetchPassGoodsList: uniscid 为空', 'warn');
+            return null;
+        }
+
+        addLog(`开始拉取商品库 [${uniscid}]...`, 'info');
+        if (onProgress) onProgress('正在查询商品总数...');
+
+        const countRes = await callApi('/approval/passGoodsList', 'POST', {
+            uniscid,
+            pageSize: 1,
+            pageNum: 1
+        });
+
+        if (!countRes || countRes.code !== 0) {
+            addLog(`查询商品总数失败: ${countRes?.msg || '未知错误'}`, 'error');
+            return null;
+        }
+
+        const totalCount = countRes.count || 0;
+        addLog(`商品库共 ${totalCount} 条记录`, 'info');
+
+        if (totalCount === 0) {
+            return { data: [], totalCount: 0 };
+        }
+
+        if (onProgress) onProgress(`正在拉取 ${totalCount} 条商品数据...`);
+
+        const dataRes = await callApi('/approval/passGoodsList', 'POST', {
+            uniscid,
+            pageSize: totalCount,
+            pageNum: 1
+        });
+
+        if (!dataRes || dataRes.code !== 0) {
+            addLog(`拉取商品库失败: ${dataRes?.msg || '未知错误'}`, 'error');
+            return null;
+        }
+
+        const items = dataRes.data || [];
+        addLog(`商品库拉取完成: ${items.length} 条`, 'info');
+
+        await savePassGoodsCache(uniscid, items, totalCount);
+
+        return { data: items, totalCount };
     }
 
     // ==================== 商品 Excel 搜索模块 ====================
@@ -3385,18 +3436,12 @@
         let allSheetHeaders = {};
         let sheetNames = [];
         let currentSheet = "";
-        let lastSheetName = "";         // 记住上次选的工作表（当前会话）
         let fuseInstance = null;
         let currentItems = [];
         let libsLoaded = false;
-        let savedHandle = null;
         let currentFileName = "";
         let dataLoaded = false;
         let poolDownloaded = false;
-
-        const DB_NAME = 'ProductFileDB';
-        const DB_STORE = 'handles';
-        const DB_KEY = 'lastExcel';
 
         const $ = id => document.getElementById(id);
 
@@ -3417,10 +3462,7 @@
         async function ensureLibs() {
             if (libsLoaded) return;
             if (_libsLoading) return _libsLoading;
-            _libsLoading = Promise.all([
-                loadScript('https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js'),
-                loadScript('https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js')
-            ]).then(() => {
+            _libsLoading = loadScript('https://cdn.jsdelivr.net/npm/fuse.js@7.0.0/dist/fuse.min.js').then(() => {
                 libsLoaded = true;
                 _libsLoading = null;
             }).catch(err => {
@@ -3451,221 +3493,22 @@
             return '';
         }
 
-        // ---- IndexedDB 持久化 FileSystemFileHandle ----
-        function openDB() {
-            return new Promise((resolve, reject) => {
-                const req = indexedDB.open(DB_NAME, 1);
-                req.onupgradeneeded = () => { req.result.createObjectStore(DB_STORE); };
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => reject(req.error);
-            });
-        }
-
-        async function saveHandleToDB(handle) {
-            try {
-                const db = await openDB();
-                const tx = db.transaction(DB_STORE, 'readwrite');
-                tx.objectStore(DB_STORE).put(handle, DB_KEY);
-                await new Promise(r => { tx.oncomplete = r; });
-                db.close();
-            } catch (e) {}
-        }
-
-        async function loadHandleFromDB() {
-            try {
-                const db = await openDB();
-                const tx = db.transaction(DB_STORE, 'readonly');
-                const handle = await new Promise(r => {
-                    const req = tx.objectStore(DB_STORE).get(DB_KEY);
-                    req.onsuccess = () => r(req.result);
-                    req.onerror = () => r(null);
-                });
-                db.close();
-                return handle || null;
-            } catch (e) { return null; }
-        }
-
-        async function tryRecoverSavedFile() {
-            const handle = await loadHandleFromDB();
-            if (!handle) return null;
-
-            let perm = await handle.queryPermission({ mode: 'read' });
-            if (perm !== 'granted') perm = await handle.requestPermission({ mode: 'read' });
-            if (perm !== 'granted') { await saveHandleToDB(null); return null; }
-
-            try {
-                const file = await handle.getFile();
-                if (!file) return null;
-                savedHandle = handle;
-                addLog('自动恢复上次文件: ' + file.name, 'info');
-                return file;
-            } catch (e) {
-                addLog('上次文件不可访问，请重新选择', 'warn');
-                await saveHandleToDB(null);
-                return null;
-            }
-        }
-
-        // ---- Excel 解析 ----
-        function parseFile(file) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = function (e) {
-                    try {
-                        const buf = e.target.result;
-                        addLog('正在解析: ' + file.name + ' (' + (buf.byteLength / 1024).toFixed(0) + ' KB)', 'info');
-                        const wb = XLSX.read(new Uint8Array(buf), { type: 'array' });
-                        sheetNames = wb.SheetNames;
-                        allSheetData = {};
-                        allSheetHeaders = {};
-
-                        for (const name of sheetNames) {
-                            const ws = wb.Sheets[name];
-                            const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
-                            allSheetData[name] = rows;
-                            const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-                            allSheetHeaders[name] = raw[0] ? raw[0].map(h => String(h || '').trim()) : [];
-                        }
-
-                        const total = Object.values(allSheetData).reduce((s, a) => s + a.length, 0);
-                        addLog('解析完成: ' + sheetNames.length + ' 个工作表, 共 ' + total + ' 条', 'info');
-                        resolve({ sheetNames, total });
-                    } catch (err) {
-                        reject(err);
-                    }
-                };
-                reader.onerror = () => reject(new Error('文件读取失败'));
-                reader.readAsArrayBuffer(file);
-            });
-        }
-
-        // ---- 渲染工作表 Chips ----
-        function renderSheetChips() {
-            const container = $('psSheetChips');
-            const wrapper = $('psSheetChipsWrap');
-            const expandRow = $('psChipExpandRow');
-            container.innerHTML = '';
-            sheetNames.forEach(name => {
-                const chip = document.createElement('mdui-chip');
-                chip.variant = 'filter';
-                chip.selectable = true;
-                chip.dataset.sheet = name;
-                chip.textContent = name + ' (' + allSheetData[name].length + ')';
-                chip.addEventListener('click', () => {
-                    container.querySelectorAll('mdui-chip').forEach(c => c.selected = false);
-                    chip.selected = true;
-                    selectSheet(name);
-                });
-                container.appendChild(chip);
-            });
-            wrapper.style.display = '';
-            container.classList.add('collapsed');
-
-            requestAnimationFrame(() => {
-                if (container.scrollHeight > container.clientHeight + 2) {
-                    expandRow.style.display = '';
-                } else {
-                    expandRow.style.display = 'none';
-                }
-            });
-
-            if (lastSheetName && sheetNames.includes(lastSheetName)) {
-                const prev = container.querySelector(`[data-sheet="${CSS.escape(lastSheetName)}"]`);
-                if (prev) {
-                    requestAnimationFrame(() => prev.click());
-                    return;
-                }
-            }
-            if (sheetNames.length === 1) {
-                requestAnimationFrame(() => {
-                    const chip = container.querySelector('mdui-chip');
-                    if (chip) chip.click();
-                });
-            }
-        }
-
         function showParsed(fileName) {
             currentFileName = fileName;
             dataLoaded = true;
-            $('psDropZone').style.display = 'none';
-            $('psDownloadSection').style.display = 'none';
             $('psBottomBar').style.display = 'flex';
             $('psFileName').textContent = fileName;
             $('psSearchBar').style.display = '';
             $('psResultsList').style.display = '';
             $('psCachedBadge').style.display = poolDownloaded ? '' : 'none';
 
-            renderSheetChips();
-            $('psResultsList').innerHTML = '<div style="padding:50px 20px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="table_chart" style="font-size:36px;opacity:0.3;display:block;margin:0 auto 6px;"></mdui-icon>请选择一个工作表开始搜索</div>';
-        }
-
-        function showDropZone() {
-            const searchBar = $('psSearchBar');
-            const si = $('psSearchInput');
-            const scWrap = $('psSheetChipsWrap');
-            const ss = $('psSearchStatus');
-            const bb = $('psBottomBar');
-            const dz = $('psDropZone');
-            const rl = $('psResultsList');
-            const ds = $('psDownloadSection');
-
-            if (searchBar) searchBar.style.display = 'none';
-            if (si) { si.disabled = true; si.value = ''; }
-            if (scWrap) { scWrap.style.display = 'none'; $('psSheetChips').innerHTML = ''; }
-            if (ss) ss.style.display = 'none';
-            if (bb) bb.style.display = 'none';
-            if (dz) dz.style.display = '';
-            if (ds) ds.style.display = 'none';
-            if (rl) {
-                rl.style.display = '';
-                rl.innerHTML = '<div style="padding:50px 20px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="upload_file" style="font-size:42px;opacity:0.35;display:block;margin:0 auto 8px;"></mdui-icon>请先上传 Excel 文件</div>';
-            }
-            currentItems = [];
-            fuseInstance = null;
-            allSheetData = {};
-            sheetNames = [];
-            dataLoaded = false;
-            poolDownloaded = false;
-        }
-
-        function handleFile(file, handle) {
-            if (handle) {
-                savedHandle = handle;
-                saveHandleToDB(handle);
-            }
-            poolDownloaded = false;
-
-            $('psResultsList').innerHTML = '<div class="ps-loading-box"><mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>正在解析 Excel...</span></div>';
-
-            ensureLibs().then(() => parseFile(file)).then(() => {
-                showParsed(file.name);
-            }).catch(err => {
-                $('psResultsList').innerHTML = '<div style="padding:40px;text-align:center;color:rgb(var(--mdui-color-error));"><mdui-icon name="error_outline" style="font-size:36px;display:block;margin:0 auto 6px;"></mdui-icon>解析失败: ' + escapeHtml(err.message) + '</div>';
-                addLog('Excel 解析失败: ' + err.message, 'error');
-            });
-        }
-
-        async function pickFileViaFSA() {
-            try {
-                const [handle] = await window.showOpenFilePicker({
-                    types: [{
-                        description: 'Excel 文件',
-                        accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xls'] }
-                    }],
-                    startIn: 'documents'
-                });
-                const file = await handle.getFile();
-                handleFile(file, handle);
-            } catch (e) {
-                if (e.name !== 'AbortError') {
-                    addLog('文件选择失败: ' + e.message, 'error');
-                }
+            if (sheetNames.length > 0) {
+                selectSheet(sheetNames[0]);
             }
         }
 
         function selectSheet(name) {
             currentSheet = name;
-            lastSheetName = name;
             currentItems = allSheetData[name] || [];
             fuseInstance = null;
             $('psSearchInput').value = '';
@@ -3741,8 +3584,9 @@
                 const item = r.item || r;
                 const codeField = findField(item, ['企业商品编号', '商品编号', '编号', 'goodsCode', '条码', '编码']);
                 const nameField = findField(item, ['商品名称', '名称', 'goodsName', '品名']);
-                const typeField = findField(item, ['商品类型']);
-                const priceField = findField(item, ['备案价', '价格', 'filingPrice']);
+                const typeField = findField(item, ['商品类型', 'goodsType']);
+                const priceField = findField(item, ['备案价', '价格', 'filingPrice', 'tradePriceMonth3', 'subsidyBackPrice']);
+                const isDisabled = String(item.isHandle) === '0';
 
                 let scoreHtml = '';
                 if (query) {
@@ -3757,10 +3601,10 @@
                 const codeHtml = query ? highlightText(codeField, query) : escapeHtml(codeField);
 
                 const row = document.createElement('div');
-                row.className = 'ps-result-row';
+                row.className = 'ps-result-row' + (isDisabled ? ' ps-result-disabled' : '');
                 row.innerHTML =
                     '<div class="ps-result-left">' +
-                        '<span class="ps-result-name">' + nameHtml + '</span>' +
+                        '<span class="ps-result-name">' + nameHtml + (isDisabled ? ' <span class="ps-disabled-tag">不可用</span>' : '') + '</span>' +
                         '<span class="ps-result-meta">' +
                             '<span>' + codeHtml + '</span>' +
                             (typeField ? '<span>' + escapeHtml(typeField) + '</span>' : '') +
@@ -3768,7 +3612,9 @@
                     '</div>' +
                     scoreHtml +
                     '<span class="ps-result-price">¥' + escapeHtml(priceField || '-') + '</span>';
-                row.addEventListener('click', () => importProduct(item));
+                if (!isDisabled) {
+                    row.addEventListener('click', () => importProduct(item));
+                }
                 list.appendChild(row);
             });
             if (items.length > maxShow) {
@@ -3776,43 +3622,6 @@
                 hint.style.cssText = 'padding:8px;text-align:center;font-size:12px;color:rgb(var(--mdui-color-outline));';
                 hint.textContent = '仅显示前 ' + maxShow + ' 条，请缩小搜索范围';
                 list.appendChild(hint);
-            }
-        }
-
-        // 品类关键词 → 主表单 chip value 映射表
-        const CATEGORY_MAP = [
-            { keys: ['电视', '电视机', '彩电'], val: 'A01' },
-            { keys: ['冰箱', '冰柜', '冷柜'], val: 'A02' },
-            { keys: ['洗衣机', '洗衣', '烘干'], val: 'A03' },
-            { keys: ['空调', '空调挂机', '空调柜机', '中央空调'], val: 'A04' },
-            { keys: ['电脑', '笔记本', '台式机', '一体机'], val: 'A05' },
-            { keys: ['热水器', '燃气热水器', '电热水器', '热水'], val: 'A06' },
-            { keys: ['手机', '智能手机'], val: 'B01' },
-            { keys: ['平板', '平板电脑'], val: 'B02' },
-            { keys: ['手表', '手环', '智能手表', '智能手环'], val: 'B03' },
-            { keys: ['智能眼镜', '眼镜', 'AR眼镜', 'VR眼镜'], val: 'B04' },
-            { keys: ['干衣机'], val: 'JS001' },
-            { keys: ['洗碗机'], val: 'JS002' },
-            { keys: ['烟机', '油烟机', '抽油烟机'], val: 'JS003' },
-            { keys: ['燃气灶', '灶具', '灶'], val: 'JS004' },
-            { keys: ['净水器', '净水', '饮水机'], val: 'JS005' },
-            { keys: ['智能马桶', '马桶', '马桶盖'], val: 'JS006' },
-            { keys: ['扫地机', '扫地机器人', '拖地机', '扫地'], val: 'JS007' },
-            { keys: ['数码相机', '相机', '微单', '单反'], val: 'JS008' },
-            { keys: ['电动轮椅', '轮椅'], val: 'JS010' },
-        ];
-
-        function selectCategoryChip(typeText) {
-            if (!typeText) return;
-            for (const entry of CATEGORY_MAP) {
-                for (const kw of entry.keys) {
-                    if (typeText.includes(kw)) {
-                        const chip = document.querySelector('#productCategoryChips mdui-chip[value="' + entry.val + '"]');
-                        if (chip) { chip.selected = true; }
-                        addLog('品类匹配: ' + typeText + ' → ' + entry.val, 'info');
-                        return;
-                    }
-                }
             }
         }
 
@@ -3872,111 +3681,105 @@
             $('productSearchDialog').open = true;
             try { await ensureLibs(); } catch (e) { addLog('依赖库加载失败: ' + e.message, 'error'); }
 
-            const poolUrl = (state.productPoolPath || '').trim();
-
             if (dataLoaded && sheetNames.length > 0) {
                 showParsed(currentFileName);
                 return;
             }
 
-            if (poolUrl && /^https?:\/\//i.test(poolUrl)) {
-                // 先显示加载状态，避免用户以为卡住了
-                $('psResultsList').innerHTML = '<div class="ps-loading-box"><mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>正在加载商品池...</span></div>';
-                $('psDropZone').style.display = 'none';
-                $('psDownloadSection').style.display = 'none';
+            const uniscid = state.currentUniscid;
+            if (!uniscid) {
+                $('psResultsList').innerHTML = '<div style="padding:40px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="info" style="font-size:36px;opacity:0.3;display:block;margin:0 auto 6px;"></mdui-icon>未获取到 uniscid，请先登录</div>';
                 $('psSearchBar').style.display = 'none';
-                $('psSheetChipsWrap').style.display = 'none';
                 $('psSearchStatus').style.display = 'none';
                 $('psBottomBar').style.display = 'none';
-
-                // 尝试从 IndexedDB 缓存读取
-                const cachedBlob = await loadCachedPoolBlob(poolUrl);
-                if (cachedBlob) {
-                    const fileName = poolUrl.split('/').pop().split('?')[0] || 'products.xlsx';
-                    addLog('使用缓存的商品池: ' + fileName, 'info');
-                    await parseFile(new File([cachedBlob], fileName));
-                    poolDownloaded = true;
-                    showParsed(fileName);
-                    return;
-                }
-
-                showDownloadUI();
-                addLog('正在下载商品池: ' + poolUrl, 'info');
-                try {
-                    const arrayBuf = await downloadPoolWithProgress(poolUrl);
-                    const fileName = poolUrl.split('/').pop().split('?')[0] || 'products.xlsx';
-                    hideDownloadUI();
-                    await parseFile(new File([arrayBuf], fileName));
-                    poolDownloaded = true;
-                    showParsed(fileName);
-                    addLog('商品池下载并解析成功: ' + fileName, 'info');
-                    // 后台缓存下载的文件，不阻塞 UI
-                    savePoolBlobToCache(poolUrl, new Blob([arrayBuf]));
-                    return;
-                } catch (e) {
-                    hideDownloadUI();
-                    addLog('商品池下载失败: ' + e.message, 'error');
-                    showSnackbar({ message: '商品池下载失败，可手动上传文件' });
-                }
+                return;
             }
 
-            showDropZone();
-            const recovered = await tryRecoverSavedFile();
-            if (recovered) {
-                handleFile(recovered, savedHandle);
-            }
-        }
-
-        function showDownloadUI() {
-            $('psDownloadSection').style.display = 'flex';
-            $('psDropZone').style.display = 'none';
+            $('psResultsList').innerHTML = '<div class="ps-loading-box"><mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>正在加载商品库...</span></div>';
             $('psSearchBar').style.display = 'none';
-            $('psSheetChipsWrap').style.display = 'none';
             $('psSearchStatus').style.display = 'none';
             $('psBottomBar').style.display = 'none';
-            $('psResultsList').style.display = 'none';
-            $('psResultsList').innerHTML = '';
-            $('psDownloadProgress').value = 0;
-            $('psDownloadStatus').textContent = '准备下载...';
-        }
 
-        function hideDownloadUI() {
-            $('psDownloadSection').style.display = 'none';
-        }
+            const cached = await loadPassGoodsCache(uniscid);
+            if (cached && cached.data && cached.data.length > 0) {
+                const age = Date.now() - (cached.timestamp || 0);
+                const hours = Math.floor(age / 3600000);
+                if (age > CONSTANTS.PASS_GOODS_CACHE_TTL_MS) {
+                    addLog(`商品库缓存已过期 (${hours}小时前)，开始刷新...`, 'info');
+                } else {
+                    addLog(`使用缓存商品库: ${cached.data.length} 条 (${hours}小时前更新)`, 'info');
+                    localStorage.setItem(CONSTANTS.PASS_GOODS_COUNT_KEY, String(cached.data.length));
+                    loadApiDataIntoSearch(cached.data, uniscid);
+                    return;
+                }
+            }
 
-        async function downloadPoolWithProgress(url) {
-            return new Promise((resolve, reject) => {
-                const xhr = new XMLHttpRequest();
-                xhr.open('GET', url, true);
-                xhr.responseType = 'arraybuffer';
-                xhr.timeout = 60000;
-
-                xhr.onprogress = (e) => {
-                    if (e.lengthComputable) {
-                        const pct = e.loaded / e.total;
-                        $('psDownloadProgress').value = pct;
-                        const loadedKB = (e.loaded / 1024).toFixed(0);
-                        const totalKB = (e.total / 1024).toFixed(0);
-                        $('psDownloadStatus').textContent = `下载中 ${loadedKB} / ${totalKB} KB (${Math.round(pct * 100)}%)`;
-                    } else {
-                        $('psDownloadStatus').textContent = `已下载 ${(e.loaded / 1024).toFixed(0)} KB...`;
-                    }
-                };
-
-                xhr.onload = () => {
-                    if (xhr.status >= 200 && xhr.status < 300) {
-                        $('psDownloadProgress').value = 1;
-                        $('psDownloadStatus').textContent = '下载完成，正在解析...';
-                        resolve(xhr.response);
-                    } else {
-                        reject(new Error('HTTP ' + xhr.status));
-                    }
-                };
-
-                xhr.onerror = () => reject(new Error('网络错误'));
-                xhr.ontimeout = () => reject(new Error('请求超时'));
-                xhr.send();
+            const result = await fetchPassGoodsList(uniscid, (msg) => {
+                $('psResultsList').innerHTML = '<div class="ps-loading-box"><mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>' + escapeHtml(msg) + '</span></div>';
             });
+
+            if (result && result.data && result.data.length > 0) {
+                localStorage.setItem(CONSTANTS.PASS_GOODS_COUNT_KEY, String(result.data.length));
+                loadApiDataIntoSearch(result.data, uniscid);
+            } else {
+                $('psResultsList').innerHTML = '<div style="padding:40px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="inventory_2" style="font-size:36px;opacity:0.3;display:block;margin:0 auto 6px;"></mdui-icon>商品库为空或拉取失败</div>';
+            }
+        }
+
+        function loadApiDataIntoSearch(items, displayName) {
+            const sheetName = '商品库';
+            allSheetData = { [sheetName]: items };
+            allSheetHeaders = { [sheetName]: Object.keys(items[0] || {}) };
+            sheetNames = [sheetName];
+            currentFileName = displayName || '商品库';
+            poolDownloaded = true;
+            showParsed(displayName || '商品库');
+        }
+
+        async function refreshGoodsPool() {
+            const uniscid = state.currentUniscid;
+            if (!uniscid) {
+                return showSnackbar({ message: '未获取到 uniscid，请先登录' });
+            }
+
+            addLog(`强制刷新商品库 [${uniscid}]...`, 'info');
+            showSnackbar({ message: '正在刷新商品库...' });
+
+            const lastCount = parseInt(localStorage.getItem(CONSTANTS.PASS_GOODS_COUNT_KEY) || '0', 10);
+
+            dataLoaded = false;
+            poolDownloaded = false;
+            sheetNames = [];
+            allSheetData = {};
+            allSheetHeaders = {};
+            currentItems = [];
+            fuseInstance = null;
+
+            $('psResultsList').innerHTML = '<div class="ps-loading-box"><mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>正在刷新商品库...</span></div>';
+            $('psSearchBar').style.display = 'none';
+            $('psSearchStatus').style.display = 'none';
+            $('psBottomBar').style.display = 'none';
+            $('psResultsList').style.display = '';
+
+            const result = await fetchPassGoodsList(uniscid, (msg) => {
+                $('psResultsList').innerHTML = '<div class="ps-loading-box"><mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>' + escapeHtml(msg) + '</span></div>';
+            });
+
+            if (result && result.data && result.data.length > 0) {
+                const newCount = result.data.length;
+                localStorage.setItem(CONSTANTS.PASS_GOODS_COUNT_KEY, String(newCount));
+                loadApiDataIntoSearch(result.data, uniscid);
+                if (lastCount > 0 && newCount > lastCount) {
+                    const added = newCount - lastCount;
+                    addLog(`商品库更新: ${lastCount} -> ${newCount} (+${added})`, 'info');
+                    showSnackbar({ message: `商品库已更新: 新增 ${added} 条商品 (${newCount} 条)` });
+                } else {
+                    showSnackbar({ message: `商品库已刷新: ${newCount} 条` });
+                }
+            } else {
+                showSnackbar({ message: '商品库刷新失败' });
+                $('psResultsList').innerHTML = '<div style="padding:40px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="inventory_2" style="font-size:36px;opacity:0.3;display:block;margin:0 auto 6px;"></mdui-icon>商品库为空或拉取失败</div>';
+            }
         }
 
         function resetCache() {
@@ -3988,62 +3791,14 @@
             currentItems = [];
             fuseInstance = null;
             currentSheet = '';
-            lastSheetName = '';
             currentFileName = '';
         }
 
         function init() {
             $('psCloseBtn').addEventListener('click', () => { $('productSearchDialog').open = false; });
 
-            // 展开 drop zone 内选择 / 更换文件按钮
-            $('psBrowseBtn').addEventListener('click', () => {
-                if (window.showOpenFilePicker) {
-                    pickFileViaFSA();
-                } else {
-                    $('psFileInput').click();
-                }
-            });
-
             $('psChangeFileBtn').addEventListener('click', () => {
-                if (window.showOpenFilePicker) {
-                    pickFileViaFSA();
-                } else {
-                    $('psFileInput').click();
-                }
-            });
-
-            $('psFileInput').addEventListener('change', (e) => {
-                const file = e.target.files[0];
-                if (file) handleFile(file, null);
-                $('psFileInput').value = '';
-            });
-
-            // 拖拽上传（drop zone）
-            const dropZone = $('psDropZone');
-            ['dragenter', 'dragover'].forEach(evt => {
-                dropZone.addEventListener(evt, (e) => {
-                    e.preventDefault(); e.stopPropagation();
-                    dropZone.classList.add('drag-over');
-                });
-            });
-            ['dragleave', 'drop'].forEach(evt => {
-                dropZone.addEventListener(evt, (e) => {
-                    e.preventDefault(); e.stopPropagation();
-                    dropZone.classList.remove('drag-over');
-                });
-            });
-            dropZone.addEventListener('drop', async (e) => {
-                const file = e.dataTransfer.files[0];
-                if (!file) return;
-                let handle = null;
-                try {
-                    const item = e.dataTransfer.items[0];
-                    if (item && item.getAsFileSystemHandle) {
-                        const h = await item.getAsFileSystemHandle();
-                        if (h.kind === 'file') handle = h;
-                    }
-                } catch (_) {}
-                handleFile(file, handle);
+                refreshGoodsPool();
             });
 
             $('psSearchInput').addEventListener('input', () => {
@@ -4059,21 +3814,9 @@
                 doSearch('');
                 $('psSearchInput').focus();
             });
-
-            $('psChipExpandBtn').addEventListener('click', () => {
-                const chips = $('psSheetChips');
-                const btn = $('psChipExpandBtn');
-                if (chips.classList.contains('collapsed')) {
-                    chips.classList.remove('collapsed');
-                    btn.textContent = '收起';
-                } else {
-                    chips.classList.add('collapsed');
-                    btn.textContent = '展开工作表';
-                }
-            });
         }
 
-        return { open, init, resetCache };
+        return { open, init, resetCache, refreshGoodsPool };
     })();
 
     function bindEventListeners() {
@@ -4119,102 +3862,6 @@
         });
         document.getElementById('confirmImportBtn').addEventListener('click', confirmImportAction);
         document.getElementById('testDingTalkBtn').addEventListener('click', testDingTalk);
-        document.getElementById('configPoolBrowseBtn').addEventListener('click', async () => {
-            if (!window.showOpenFilePicker) {
-                showSnackbar({ message: '当前浏览器不支持 File System Access，请手动输入云端 URL' });
-                return;
-            }
-            try {
-                const [handle] = await window.showOpenFilePicker({
-                    types: [{ description: 'Excel 文件', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx', '.xls'] } }],
-                    startIn: 'documents'
-                });
-                const file = await handle.getFile();
-                document.getElementById('configProductPool').value = file.name;
-                // 保存 handle 到 IndexedDB 供后续恢复
-                const db = await new Promise((r, j) => { const req = indexedDB.open('ProductFileDB', 1); req.onupgradeneeded = () => req.result.createObjectStore('handles'); req.onsuccess = () => r(req.result); req.onerror = () => j(req.error); });
-                const tx = db.transaction('handles', 'readwrite');
-                tx.objectStore('handles').put(handle, 'lastExcel');
-                await new Promise(r => { tx.oncomplete = r; });
-                db.close();
-                addLog('已关联本地文件: ' + file.name, 'info');
-            } catch (e) {
-                if (e.name !== 'AbortError') addLog('文件选择失败: ' + e.message, 'error');
-            }
-        });
-
-        document.getElementById('configPoolDownloadBtn').addEventListener('click', async () => {
-            const url = document.getElementById('configProductPool').value.trim();
-            if (!url || !/^https?:\/\//i.test(url)) {
-                return showSnackbar({ message: '请先输入有效的云端 URL 地址' });
-            }
-
-            const dialog = document.getElementById('poolDownloadDialog');
-            const progress = document.getElementById('poolDlProgress');
-            const status = document.getElementById('poolDlStatus');
-            const closeBtn = document.getElementById('poolDlCloseBtn');
-
-            progress.value = 0;
-            status.textContent = '准备下载...';
-            closeBtn.disabled = true;
-            dialog.open = true;
-
-            const xhr = new XMLHttpRequest();
-            xhr.open('GET', url, true);
-            xhr.responseType = 'arraybuffer';
-            xhr.timeout = 60000;
-
-            xhr.onprogress = (e) => {
-                if (e.lengthComputable) {
-                    const pct = e.loaded / e.total;
-                    progress.value = pct;
-                    const loadedKB = (e.loaded / 1024).toFixed(0);
-                    const totalKB = (e.total / 1024).toFixed(0);
-                    status.textContent = `下载中 ${loadedKB} / ${totalKB} KB (${Math.round(pct * 100)}%)`;
-                } else {
-                    status.textContent = `已下载 ${(e.loaded / 1024).toFixed(0)} KB...`;
-                }
-            };
-
-            xhr.onload = async () => {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                    progress.value = 1;
-                    status.textContent = '下载成功，正在缓存...';
-                    try {
-                        await savePoolBlobToCache(url, new Blob([xhr.response]));
-                        ProductSearch.resetCache();
-                        status.textContent = '下载成功，已更新缓存';
-                        addLog('手动下载商品池成功: ' + url, 'info');
-                        showSnackbar({ message: '商品池下载并缓存成功' });
-                    } catch (e) {
-                        status.textContent = '缓存失败: ' + e.message;
-                        addLog('商品池缓存失败: ' + e.message, 'warn');
-                    }
-                } else {
-                    status.textContent = '下载失败: HTTP ' + xhr.status;
-                    addLog('商品池下载失败: HTTP ' + xhr.status, 'error');
-                }
-                closeBtn.disabled = false;
-            };
-
-            xhr.onerror = () => {
-                status.textContent = '下载失败: 网络错误';
-                closeBtn.disabled = false;
-                addLog('商品池下载网络错误', 'error');
-            };
-
-            xhr.ontimeout = () => {
-                status.textContent = '下载失败: 请求超时';
-                closeBtn.disabled = false;
-                addLog('商品池下载超时', 'error');
-            };
-
-            xhr.send();
-        });
-
-        document.getElementById('poolDlCloseBtn').addEventListener('click', () => {
-            document.getElementById('poolDownloadDialog').open = false;
-        });
 
         document.getElementById('closeErrorDialogBtn').addEventListener('click', () => {
             els.errorDialog.open = false;
@@ -4430,7 +4077,6 @@
         state.aiEndpoint = localStorage.getItem(CONSTANTS.AI_ENDPOINT_KEY) || "";
         state.aiModel = localStorage.getItem(CONSTANTS.AI_MODEL_KEY) || "";
         state.aiKey = localStorage.getItem(CONSTANTS.AI_KEY_KEY) || "";
-        state.productPoolPath = localStorage.getItem(CONSTANTS.PRODUCT_POOL_KEY) || "";
 
         if (state.storePayloads.length && state.storePayloads[state.currentStoreIndex]?.payload?.trim()) {
             state.loginPayload = state.storePayloads[state.currentStoreIndex].payload.trim();

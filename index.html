@@ -180,18 +180,6 @@
 
             <div
                 style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
-                商品池配置
-            </div>
-            <mdui-text-field id="configProductPool" label="商品池路径 (可为本地文件或云端URL)" variant="outlined" clearable
-                placeholder="https://example.com/products.xlsx 或留空手动拖拽上传"
-                style="margin-bottom: 12px;"></mdui-text-field>
-            <div style="display:flex; gap:8px; margin-bottom:4px;">
-                <mdui-button id="configPoolBrowseBtn" variant="tonal" icon="folder_open" size="small">选择本地文件</mdui-button>
-                <mdui-button id="configPoolDownloadBtn" variant="tonal" icon="cloud_download" size="small">下载/更新</mdui-button>
-            </div>
-
-            <div
-                style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
                 备份与还原
             </div>
             <p style="margin-bottom: 12px; font-size: 12px; opacity: 0.6;">导出配置为文本以便备份或在其他设备导入。</p>
@@ -396,20 +384,6 @@
         <span slot="headline">商品查找与导入</span>
         <div class="ps-dialog-body">
 
-            <div id="psDownloadSection" class="ps-download-section">
-                <mdui-icon name="cloud_download" style="font-size:36px; opacity:0.5;"></mdui-icon>
-                <div style="font-size:14px; font-weight:500;">正在下载商品池...</div>
-                <mdui-linear-progress id="psDownloadProgress" style="width:100%;"></mdui-linear-progress>
-                <span id="psDownloadStatus" class="ps-download-status">准备下载...</span>
-            </div>
-
-            <div id="psSheetChipsWrap" style="display:none;">
-                <div id="psSheetChips" class="ps-sheet-chips"></div>
-                <div id="psChipExpandRow" class="ps-chip-expand-row" style="display:none;">
-                    <mdui-button id="psChipExpandBtn" variant="text" size="small">展开工作表</mdui-button>
-                </div>
-            </div>
-
             <div id="psSearchBar" class="ps-search-bar" style="display:none;">
                 <svg class="ps-search-svg" viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
                 <input id="psSearchInput" type="text" class="ps-search-input" placeholder="输入型号/名称搜索" disabled>
@@ -423,37 +397,17 @@
 
             <div id="psResultsList" class="ps-results-list"></div>
 
-            <div id="psDropZone" class="ps-drop-zone">
-                <mdui-icon name="cloud_upload" style="font-size:36px; opacity:0.4; display:block; margin:0 auto 6px;">
-                </mdui-icon>
-                <div style="font-size:14px; font-weight:500; margin-bottom:2px;">拖拽 Excel 文件到此处</div>
-                <div style="font-size:11px; color:rgb(var(--mdui-color-outline)); margin-bottom:10px;">
-                    支持 .xlsx / .xls，多工作表自动识别
-                </div>
-                <input type="file" id="psFileInput" accept=".xlsx,.xls" style="display:none;">
-                <mdui-button id="psBrowseBtn" variant="outlined" icon="folder_open" size="small">选择文件</mdui-button>
-            </div>
-
             <div id="psBottomBar" class="ps-bottom-bar">
                 <span style="display:flex; align-items:center; gap:4px; overflow:hidden;">
-                    <mdui-icon name="description" style="font-size:14px; flex-shrink:0;"></mdui-icon>
+                    <mdui-icon name="store" style="font-size:14px; flex-shrink:0;"></mdui-icon>
                     <span id="psFileName" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
                     <span id="psCachedBadge" class="ps-cached-badge">已缓存</span>
                 </span>
-                <mdui-button id="psChangeFileBtn" variant="text" size="small" icon="folder_open"
-                    style="flex-shrink:0; font-size:11px;">更换文件</mdui-button>
+                <mdui-button id="psChangeFileBtn" variant="text" size="small" icon="refresh"
+                    style="flex-shrink:0; font-size:11px;">刷新商品库</mdui-button>
             </div>
         </div>
         <mdui-button id="psCloseBtn" slot="action" variant="text">关闭</mdui-button>
-    </mdui-dialog>
-
-    <mdui-dialog id="poolDownloadDialog" close-on-overlay-click style="width:380px;">
-        <span slot="headline">下载商品池</span>
-        <div style="display:flex; flex-direction:column; align-items:center; gap:16px; padding:16px 0;">
-            <mdui-linear-progress id="poolDlProgress" style="width:100%;"></mdui-linear-progress>
-            <span id="poolDlStatus" style="font-size:13px; color:rgb(var(--mdui-color-outline));">准备下载...</span>
-        </div>
-        <mdui-button id="poolDlCloseBtn" slot="action" variant="filled">关闭</mdui-button>
     </mdui-dialog>
 
 </body>
