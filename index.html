@@ -253,98 +253,104 @@
     </mdui-dialog>
 
     <div class="container">
-        <mdui-card variant="filled">
-            <div class="section-header">
-                <span class="section-title">智能填充</span>
-                <mdui-button id="smartParseBtn" variant="tonal" class="btn-small">智能识别</mdui-button>
-            </div>
-            <mdui-text-field id="smartInput" rows="2" variant="outlined" clearable placeholder="在此粘贴：
+        <div class="container-columns">
+            <div class="container-col container-col-left">
+                <mdui-card variant="filled">
+                    <div class="section-header">
+                        <span class="section-title">智能填充</span>
+                        <mdui-button id="smartParseBtn" variant="tonal" class="btn-small">智能识别</mdui-button>
+                    </div>
+                    <mdui-text-field id="smartInput" rows="2" variant="outlined" clearable placeholder="在此粘贴：
 姓名 手机号 区 街道 小区门牌"></mdui-text-field>
-        </mdui-card>
+                </mdui-card>
 
-        <mdui-card variant="filled">
-            <div class="section-header">
-                <span class="section-title">补贴资格申领人信息</span>
-                <mdui-button id="remindQualificationBtn" variant="tonal" class="btn-small"
-                    style="display:none;">等待领卷</mdui-button>
-                <mdui-button id="checkQualificationBtn" variant="tonal" class="btn-small">资格核验</mdui-button>
-            </div>
-            <mdui-text-field id="buyerName" label="姓名" variant="outlined" clearable></mdui-text-field>
-            <mdui-text-field id="buyerMobile" label="手机号" variant="outlined" clearable></mdui-text-field>
-            <div id="productCategoryChips" class="chip-container readonly-chips collapsed">
-                <mdui-chip variant="filter" selectable value="A01">电视</mdui-chip>
-                <mdui-chip variant="filter" selectable value="A02">冰箱</mdui-chip>
-                <mdui-chip variant="filter" selectable value="A03">洗衣机</mdui-chip>
-                <mdui-chip variant="filter" selectable value="A04">空调</mdui-chip>
-                <mdui-chip variant="filter" selectable value="A05">电脑</mdui-chip>
-                <mdui-chip variant="filter" selectable value="A06">热水器</mdui-chip>
-                <mdui-chip variant="filter" selectable value="B01">手机</mdui-chip>
-                <mdui-chip variant="filter" selectable value="B02">平板</mdui-chip>
-                <mdui-chip variant="filter" selectable value="B03">手表手环</mdui-chip>
-                <mdui-chip variant="filter" selectable value="B04">智能眼镜</mdui-chip>
-                <mdui-chip variant="filter" selectable value="JS001">干衣机</mdui-chip>
-                <mdui-chip variant="filter" selectable value="JS002">洗碗机</mdui-chip>
-                <mdui-chip variant="filter" selectable value="JS003">烟机</mdui-chip>
-                <mdui-chip variant="filter" selectable value="JS004">燃气灶</mdui-chip>
-                <mdui-chip variant="filter" selectable value="JS005">净水器</mdui-chip>
-                <mdui-chip variant="filter" selectable value="JS006">智能马桶</mdui-chip>
-                <mdui-chip variant="filter" selectable value="JS007">扫地机器</mdui-chip>
-                <mdui-chip variant="filter" selectable value="JS008">数码相机</mdui-chip>
-                <mdui-chip variant="filter" selectable value="JS010">电动轮椅</mdui-chip>
-            </div>
-            <div class="chip-expand-toggle">
-                <mdui-button id="chipExpandBtn" variant="text" size="small">展开全部</mdui-button>
-            </div>
-        </mdui-card>
+                <mdui-card variant="filled">
+                    <div class="section-header">
+                        <span class="section-title">补贴资格申领人信息</span>
+                        <mdui-button id="remindQualificationBtn" variant="tonal" class="btn-small"
+                            style="display:none;">等待领卷</mdui-button>
+                        <mdui-button id="checkQualificationBtn" variant="tonal" class="btn-small">资格核验</mdui-button>
+                    </div>
+                    <mdui-text-field id="buyerName" label="姓名" variant="outlined" clearable></mdui-text-field>
+                    <mdui-text-field id="buyerMobile" label="手机号" variant="outlined" clearable></mdui-text-field>
+                    <div id="productCategoryChips" class="chip-container readonly-chips collapsed">
+                        <mdui-chip variant="filter" selectable value="A01">电视</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="A02">冰箱</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="A03">洗衣机</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="A04">空调</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="A05">电脑</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="A06">热水器</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="B01">手机</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="B02">平板</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="B03">手表手环</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="B04">智能眼镜</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="JS001">干衣机</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="JS002">洗碗机</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="JS003">烟机</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="JS004">燃气灶</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="JS005">净水器</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="JS006">智能马桶</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="JS007">扫地机器</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="JS008">数码相机</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="JS010">电动轮椅</mdui-chip>
+                    </div>
+                    <div class="chip-expand-toggle">
+                        <mdui-button id="chipExpandBtn" variant="text" size="small">展开全部</mdui-button>
+                    </div>
+                </mdui-card>
 
-        <mdui-card variant="filled">
-            <div class="section-header">
-                <span class="section-title">门店订单信息</span>
-                <mdui-checkbox id="autoOrderNumCheckbox" checked>自动单号</mdui-checkbox>
-            </div>
-            <mdui-text-field id="shopOrderNumber" label="销售单号" placeholder="请输入订单号" disabled value="提交时自动生成（上一单单号 +1）"
-                variant="outlined"></mdui-text-field>
-            <div class="row">
-                <mdui-select id="citySelect" label="城市" variant="outlined"></mdui-select>
-                <mdui-select id="districtSelect" label="区县" variant="outlined"></mdui-select>
-            </div>
-            <div class="row">
-                <mdui-select id="townSelect" label="乡镇/街道" variant="outlined"></mdui-select>
-            </div>
-            <mdui-text-field id="detailAddress" label="详细地址" variant="outlined" clearable></mdui-text-field>
-        </mdui-card>
+                <div id="draftBar" class="draft-bar" style="display:none;"></div>
 
-        <mdui-card variant="filled">
-            <div class="section-header">
-                <span class="section-title">商品信息</span>
-                <mdui-button id="openProductSearchBtn" variant="tonal" class="btn-small"
-                    icon="search">查找商品</mdui-button>
+                <mdui-card variant="filled">
+                    <div class="section-header">
+                        <span class="section-title">SN码查询（仅 3C）</span>
+                        <mdui-button id="checkSncodeBtn" variant="tonal" class="btn-small">查询</mdui-button>
+                    </div>
+                    <mdui-text-field id="sncode" label="SN码" variant="outlined" clearable></mdui-text-field>
+                </mdui-card>
             </div>
-            <mdui-text-field id="goodsCode" label="商品编号" variant="outlined" clearable></mdui-text-field>
-            <mdui-select id="goodsName" label="商品名称 (可点选最近记录)" placeholder="自动计算" variant="outlined"></mdui-select>
-            <div class="row">
-                <mdui-text-field id="filingPrice" label="备案价" placeholder="自动计算" variant="outlined"
-                    readonly></mdui-text-field>
-                <mdui-text-field id="shopPrice" label="门店单价" type="text" placeholder="请输入价格" variant="outlined"
-                    clearable></mdui-text-field>
-            </div>
-            <div class="row">
-                <mdui-text-field id="actualPrice" label="实付单价" type="text" placeholder="手动输入或自动计算" variant="outlined"
-                    clearable></mdui-text-field>
-                <mdui-text-field id="subsidyPrice" label="补贴价格" type="text" placeholder="自动计算" variant="outlined"
-                    readonly></mdui-text-field>
-            </div>
-        </mdui-card>
 
-        <div id="draftBar" class="draft-bar" style="display:none;"></div>
+            <div class="container-col container-col-right">
+                <mdui-card variant="filled">
+                    <div class="section-header">
+                        <span class="section-title">门店订单信息</span>
+                        <mdui-checkbox id="autoOrderNumCheckbox" checked>自动单号</mdui-checkbox>
+                    </div>
+                    <mdui-text-field id="shopOrderNumber" label="销售单号" placeholder="请输入订单号" disabled value="提交时自动生成（上一单单号 +1）"
+                        variant="outlined"></mdui-text-field>
+                    <div class="row">
+                        <mdui-select id="citySelect" label="城市" variant="outlined"></mdui-select>
+                        <mdui-select id="districtSelect" label="区县" variant="outlined"></mdui-select>
+                    </div>
+                    <div class="row">
+                        <mdui-select id="townSelect" label="乡镇/街道" variant="outlined"></mdui-select>
+                    </div>
+                    <mdui-text-field id="detailAddress" label="详细地址" variant="outlined" clearable></mdui-text-field>
+                </mdui-card>
 
-        <mdui-card variant="filled">
-            <div class="section-header">
-                <span class="section-title">SN码查询（仅 3C）</span>
-                <mdui-button id="checkSncodeBtn" variant="tonal" class="btn-small">查询</mdui-button>
+                <mdui-card variant="filled">
+                    <div class="section-header">
+                        <span class="section-title">商品信息</span>
+                        <mdui-button id="openProductSearchBtn" variant="tonal" class="btn-small"
+                            icon="search">查找商品</mdui-button>
+                    </div>
+                    <mdui-text-field id="goodsCode" label="商品编号" variant="outlined" clearable></mdui-text-field>
+                    <mdui-select id="goodsName" label="商品名称 (可点选最近记录)" placeholder="自动计算" variant="outlined"></mdui-select>
+                    <div class="row">
+                        <mdui-text-field id="filingPrice" label="备案价" placeholder="自动计算" variant="outlined"
+                            readonly></mdui-text-field>
+                        <mdui-text-field id="shopPrice" label="门店单价" type="text" placeholder="请输入价格" variant="outlined"
+                            clearable></mdui-text-field>
+                    </div>
+                    <div class="row">
+                        <mdui-text-field id="actualPrice" label="实付单价" type="text" placeholder="手动输入或自动计算" variant="outlined"
+                            clearable></mdui-text-field>
+                        <mdui-text-field id="subsidyPrice" label="补贴价格" type="text" placeholder="自动计算" variant="outlined"
+                            readonly></mdui-text-field>
+                    </div>
+                </mdui-card>
             </div>
-            <mdui-text-field id="sncode" label="SN码" variant="outlined" clearable></mdui-text-field>
-        </mdui-card>
+        </div>
     </div>
 
     <div class="footer-info" id="versionTrigger">版本号：加载中...</div>
