@@ -1137,36 +1137,88 @@
         }
     }
 
+    function buildFullConfigBackup() {
+        // 导出按钮位于配置弹窗内，弹窗未保存时应以界面上的最新填写为准，避免备份漏掉刚录入的值
+        const useDraft = !!(els.configDialog && els.configDialog.open && Array.isArray(state.configDraft));
+        if (useDraft) syncPayloadsFromInputs();
+
+        const sourceStores = useDraft ? state.configDraft : state.storePayloads;
+        const sourceIndex = useDraft ? state.configDraftCurrentIndex : state.currentStoreIndex;
+        const readLive = (id, savedValue) => {
+            if (!useDraft) return savedValue;
+            const el = document.getElementById(id);
+            return el ? (el.value || "").trim() : savedValue;
+        };
+
+        const stores = (Array.isArray(sourceStores) ? sourceStores : []).map((store, index) => ({
+            storeKey: getStoreKey(store, index),
+            name: store.shopName || store.name || `门店${index + 1}`,
+            shopName: store.shopName || "",
+            verified: !!store.verified && !!store.payload,
+            payload: store.payload || ""
+        }));
+        const rawIndex = Number(sourceIndex);
+        const currentIndex = stores.length
+            ? Math.min(Math.max(Number.isInteger(rawIndex) ? rawIndex : 0, 0), stores.length - 1)
+            : 0;
+
+        return {
+            schemaVersion: CONSTANTS.STORE_CONFIG_VERSION,
+            stores,
+            currentIndex,
+            dingWebhook: readLive('configDingWebhook', state.dingTalkWebhook || ""),
+            dingSecret: readLive('configDingSecret', state.dingTalkSecret || ""),
+            aiEnable: useDraft
+                ? !!document.getElementById('configAiEnable')?.checked
+                : localStorage.getItem(CONSTANTS.AI_ENABLE_KEY) === "true",
+            aiEndpoint: readLive('configAiEndpoint', localStorage.getItem(CONSTANTS.AI_ENDPOINT_KEY) || ""),
+            aiModel: readLive('configAiModel', localStorage.getItem(CONSTANTS.AI_MODEL_KEY) || ""),
+            aiKey: readLive('configAiKey', state.aiKey || ""),
+            exportTime: new Date().toLocaleString()
+        };
+    }
+
     async function exportFullConfig() {
+        let configStr = "";
+        let storeCount = 0;
         try {
-            const configData = {
-                schemaVersion: CONSTANTS.STORE_CONFIG_VERSION,
-                stores: state.storePayloads.map(store => ({
-                    storeKey: store.storeKey,
-                    name: store.name,
-                    shopName: store.shopName,
-                    verified: store.verified,
-                    payload: "***"
-                })),
-                currentIndex: state.currentStoreIndex,
-                dingWebhook: state.dingTalkWebhook ? "***" : "",
-                dingSecret: state.dingTalkSecret ? "***" : "",
-                aiEnable: localStorage.getItem(CONSTANTS.AI_ENABLE_KEY),
-                aiEndpoint: localStorage.getItem(CONSTANTS.AI_ENDPOINT_KEY),
-                aiModel: localStorage.getItem(CONSTANTS.AI_MODEL_KEY),
-                aiKey: state.aiKey ? "***" : "",
-                exportTime: new Date().toLocaleString()
-            };
-
-            const configStr = JSON.stringify(configData);
-            await navigator.clipboard.writeText(configStr);
-
-            showSnackbar({ message: "脱敏配置已复制；Payload、Secret 和 AI Key 未导出" });
-            addLog("执行脱敏配置导出", "info");
+            const backup = buildFullConfigBackup();
+            storeCount = backup.stores.length;
+            configStr = JSON.stringify(backup, null, 2);
         } catch (err) {
             showError("导出失败: " + err);
-            addLog("导出配置失败: " + err, "error");
+            addLog("生成备份数据失败: " + err, "error");
+            return;
         }
+
+        if (!storeCount) {
+            showSnackbar({ message: "没有可导出的门店配置" });
+            addLog("导出终止：门店配置为空", "warn");
+            return;
+        }
+
+        try {
+            await navigator.clipboard.writeText(configStr);
+            showSnackbar({ message: `已复制 ${storeCount} 个门店的完整配置（含 Payload / Secret / AI Key 明文）` });
+            addLog(`执行完整配置明文导出：${storeCount} 个门店`, "info");
+        } catch (err) {
+            showFullConfigFallback(configStr);
+            addLog("复制到剪贴板失败，已改为手动复制: " + err, "warn");
+        }
+    }
+
+    function showFullConfigFallback(configStr) {
+        const dialog = document.getElementById('exportConfigDialog');
+        const output = document.getElementById('exportConfigRawOutput');
+        if (!dialog || !output) {
+            showError("复制失败，请检查浏览器剪贴板权限");
+            return;
+        }
+        output.value = configStr;
+        dialog.open = true;
+        setTimeout(() => {
+            try { output.select(); } catch (_) { }
+        }, 200);
     }
 
     function importFullConfig() {
@@ -1186,9 +1238,22 @@
             return;
         }
 
+        let data;
         try {
-            const data = JSON.parse(input);
+            data = JSON.parse(input);
+        } catch (err) {
+            addLog("导入配置解析失败: " + err, "error");
+            showError("解析失败：无效的 JSON 格式，请确保复制了完整的导出文本。");
+            return;
+        }
 
+        if (!data || typeof data !== 'object' || Array.isArray(data)) {
+            addLog("导入配置失败: 顶层结构不是对象", "error");
+            showError("导入失败：备份内容顶层必须是 JSON 对象。");
+            return;
+        }
+
+        try {
             if (!Array.isArray(data.stores) || !data.stores.length || data.stores.length > 50) {
                 throw new Error("门店配置必须是1至50项的数组");
             }
@@ -1200,6 +1265,7 @@
                 storeKeys.add(storeKey);
                 const existingStore = state.storePayloads.find(store => store.storeKey === storeKey)
                     || state.storePayloads.find(store => store.shopName && store.shopName === item.shopName);
+                // "***" 仅为兼容早期脱敏导出：沿用本机已有 Payload
                 const payload = item.payload === "***"
                     ? (existingStore?.payload || "")
                     : (typeof item.payload === 'string' ? item.payload : "");
@@ -1218,26 +1284,27 @@
             localStorage.setItem(CONSTANTS.CURRENT_STORE_INDEX_KEY, String(safeIndex));
             if (data.dingWebhook !== undefined && data.dingWebhook !== "***") localStorage.setItem(CONSTANTS.DINGTALK_WEBHOOK_KEY, typeof data.dingWebhook === 'string' ? data.dingWebhook : "");
             if (data.dingSecret !== undefined && data.dingSecret !== "***") localStorage.setItem(CONSTANTS.DINGTALK_SECRET_KEY, typeof data.dingSecret === 'string' ? data.dingSecret : "");
-            if (data.aiEnable !== undefined) localStorage.setItem(CONSTANTS.AI_ENABLE_KEY, String(data.aiEnable));
-            if (data.aiEndpoint !== undefined) localStorage.setItem(CONSTANTS.AI_ENDPOINT_KEY, data.aiEndpoint || "");
-            if (data.aiModel !== undefined) localStorage.setItem(CONSTANTS.AI_MODEL_KEY, data.aiModel || "");
+            if (data.aiEnable !== undefined) localStorage.setItem(CONSTANTS.AI_ENABLE_KEY, String(data.aiEnable === true || data.aiEnable === "true"));
+            if (data.aiEndpoint !== undefined) localStorage.setItem(CONSTANTS.AI_ENDPOINT_KEY, typeof data.aiEndpoint === 'string' ? data.aiEndpoint : "");
+            if (data.aiModel !== undefined) localStorage.setItem(CONSTANTS.AI_MODEL_KEY, typeof data.aiModel === 'string' ? data.aiModel : "");
             if (data.aiKey !== undefined && data.aiKey !== "***") localStorage.setItem(CONSTANTS.AI_KEY_KEY, typeof data.aiKey === 'string' ? data.aiKey : "");
 
-            addLog("导入配置成功，准备重启应用", "info");
+            const restoredCount = stores.filter(store => store.payload).length;
+            addLog(`导入配置成功：${stores.length} 个门店，其中 ${restoredCount} 个含 Payload，准备重启应用`, "info");
 
             document.getElementById('importConfigDialog').open = false;
 
             mdui.alert({
                 headline: "导入成功",
-                description: "配置已恢复，页面将自动刷新以应用更改。",
+                description: `已恢复 ${stores.length} 个门店（${restoredCount} 个含 Payload），页面将自动刷新以应用更改。`,
                 confirmText: "确定",
                 onConfirm: () => {
                     window.location.reload();
                 }
             });
         } catch (err) {
-            addLog("导入配置解析失败: " + err, "error");
-            showError("解析失败：无效的 JSON 格式，请确保复制了完整的导出文本。");
+            addLog("导入配置失败: " + err, "error");
+            showError("导入失败：" + (err && err.message ? err.message : err));
         }
     }
 
@@ -4400,6 +4467,12 @@
             document.getElementById('importConfigDialog').open = false;
         });
         document.getElementById('confirmImportBtn').addEventListener('click', confirmImportAction);
+        document.getElementById('closeExportConfigBtn').addEventListener('click', () => {
+            const dialog = document.getElementById('exportConfigDialog');
+            const output = document.getElementById('exportConfigRawOutput');
+            dialog.open = false;
+            if (output) output.value = "";
+        });
         document.getElementById('testDingTalkBtn').addEventListener('click', testDingTalk);
 
         document.getElementById('closeErrorDialogBtn').addEventListener('click', () => {

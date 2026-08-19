@@ -182,9 +182,9 @@
                 style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
                 备份与还原
             </div>
-            <p style="margin-bottom: 12px; font-size: 12px; opacity: 0.6;">默认仅导出脱敏配置，不包含 Payload、Webhook、Secret 或 AI Key；敏感值需在目标设备重新填写。</p>
+            <p style="margin-bottom: 12px; font-size: 12px; opacity: 0.6;">导出为明文 JSON 完整备份，包含 Payload、Webhook、Secret 与 AI Key；请仅在可信设备上保存或传输。</p>
             <div class="backup-btns">
-                <mdui-button id="exportConfigBtn" variant="tonal" icon="file_download">导出脱敏配置</mdui-button>
+                <mdui-button id="exportConfigBtn" variant="tonal" icon="file_download">导出完整配置</mdui-button>
                 <mdui-button id="importConfigBtn" variant="tonal" icon="file_upload">导入配置</mdui-button>
             </div>
         </div>
@@ -201,6 +201,16 @@
         </div>
         <mdui-button id="cancelImportBtn" slot="action" variant="text">取消</mdui-button>
         <mdui-button id="confirmImportBtn" slot="action" variant="filled">执行导入</mdui-button>
+    </mdui-dialog>
+
+    <mdui-dialog id="exportConfigDialog" close-on-overlay-click>
+        <span slot="headline">完整配置备份</span>
+        <div slot="description">
+            <p style="margin-bottom: 12px; font-size: 13px; opacity: 0.7;">自动复制失败，请手动全选复制下方明文 JSON 内容并妥善保管：</p>
+            <mdui-text-field id="exportConfigRawOutput" label="备份内容" rows="8" variant="outlined"
+                readonly></mdui-text-field>
+        </div>
+        <mdui-button id="closeExportConfigBtn" slot="action" variant="filled">关闭</mdui-button>
     </mdui-dialog>
 
     <mdui-dialog id="changelogDialog" close-on-overlay-click>
