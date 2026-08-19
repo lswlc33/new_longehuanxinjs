@@ -7,6 +7,7 @@
         CONFIG_KEY: "APP_LOGIN_PAYLOAD",
         STORE_PAYLOADS_KEY: "APP_LOGIN_PAYLOADS",
         CURRENT_STORE_INDEX_KEY: "APP_CURRENT_STORE_INDEX",
+        STORE_CONFIG_VERSION: 2,
         RECENT_GOODS_KEY: "APP_RECENT_GOODS_V1",
         DEFAULT_PAYLOAD: "",
         DINGTALK_WEBHOOK_KEY: "DINGTALK_WEBHOOK",
@@ -29,6 +30,8 @@
         DRAFTS_TTL_MS: 7 * 24 * 60 * 60 * 1000,
         PASS_GOODS_CACHE_TTL_MS: 24 * 60 * 60 * 1000,
         PASS_GOODS_COUNT_KEY: "PASS_GOODS_LAST_COUNT"
+        ,ORDER_QUERY_MAX_PAGES: 200
+        ,ORDER_REQUEST_TIMEOUT_MS: 20000
     };
 
     const payStates = {
@@ -42,7 +45,7 @@
         g_pending: [0, 1],
         g_paid: [2],
         g_failed: [3, 4, 6],
-        g_refunded: [5, 8]
+        g_refunded: [5, 8, 10, 12]
     };
 
     const recordStates = {
@@ -60,10 +63,10 @@
         aiModel: "",
         aiKey: "",
         currentToken: "",
-        orderToCancel: "",
-        orderToRefund: "",
+        orderToCancel: null,
+        orderToRefund: null,
         orderToPush: null,
-        currentQrOrderNumber: "",
+        currentQrOrderContext: null,
         regionTree: {},
         orderQueueByStore: { version: 1, updatedAt: 0, stores: {} },
         orderPushSentMap: {},
@@ -87,8 +90,22 @@
         orderLoadingMore: false,
         orderSearchResults: [],
         orderSubStates: null,
+        orderStorePaging: {},
+        orderQueryGeneration: 0,
+        orderQuerySignature: "",
+        orderQueryFailures: [],
+        orderContextByKey: new Map(),
         _isRefreshingToken: false,
-        currentUniscid: ""
+        currentUniscid: "",
+        storeRuntimeByKey: {},
+        storeConfigRevision: 0,
+        currentUiGeneration: 0,
+        detailRequestGeneration: 0,
+        qrRequestGeneration: 0,
+        isSubmittingOrder: false,
+        isManualPushInProgress: false,
+        configDraft: null,
+        configDraftCurrentIndex: 0
     };
 
     const els = {};
@@ -142,12 +159,87 @@
     }
 
     function getCurrentStoreKey() {
-        return `store_${state.currentStoreIndex}`;
+        return getStoreKey(state.storePayloads[state.currentStoreIndex], state.currentStoreIndex);
     }
 
     function parseStoreIndexFromKey(storeKey = "") {
         const match = String(storeKey).match(/^store_(\d+)$/);
         return match ? parseInt(match[1], 10) : -1;
+    }
+
+    function createStoreKey() {
+        const suffix = typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID().replace(/-/g, "").slice(0, 12)
+            : `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+        return `store_${suffix}`;
+    }
+
+    function getStoreKey(store, index = -1) {
+        return store?.storeKey || (index >= 0 ? `store_${index}` : "");
+    }
+
+    function getStoreByKey(storeKey) {
+        const index = state.storePayloads.findIndex((store, idx) => getStoreKey(store, idx) === storeKey);
+        return index >= 0 ? state.storePayloads[index] : null;
+    }
+
+    function getStoreIndexByKey(storeKey) {
+        return state.storePayloads.findIndex((store, idx) => getStoreKey(store, idx) === storeKey);
+    }
+
+    function resolvePersistedStoreKey(storeKey) {
+        if (getStoreByKey(storeKey)) return storeKey;
+        const legacyIndex = parseStoreIndexFromKey(storeKey);
+        const legacyKey = legacyIndex >= 0 ? `legacy_store_${legacyIndex}` : "";
+        return legacyKey && getStoreByKey(legacyKey) ? legacyKey : storeKey;
+    }
+
+    function getStoreContext(storeKey, fallback = {}) {
+        const index = getStoreIndexByKey(storeKey);
+        const store = index >= 0 ? state.storePayloads[index] : null;
+        return {
+            storeKey: storeKey || fallback.storeKey || "",
+            storeIndex: index >= 0 ? index : (fallback.storeIndex ?? -1),
+            storeName: store?.shopName || store?.name || fallback.storeName || (index >= 0 ? `门店${index + 1}` : "门店配置缺失")
+        };
+    }
+
+    function getOrderContextKey(storeKey, orderNumber) {
+        return `${storeKey || "unknown"}|${orderNumber || ""}`;
+    }
+
+    function attachOrderContext(order, storeKey, fallback = {}) {
+        const context = getStoreContext(storeKey, fallback);
+        const result = {
+            ...order,
+            storeKey: context.storeKey,
+            storeIndex: context.storeIndex,
+            storeName: context.storeName,
+            storeOrderNumber: order?.shopOrderNumber || fallback.storeOrderNumber || ""
+        };
+        if (result.ccbPayOrderNumber) {
+            state.orderContextByKey.set(getOrderContextKey(result.storeKey, result.ccbPayOrderNumber), result);
+        }
+        return result;
+    }
+
+    function findOrderContext(storeKey, orderNumber) {
+        return state.orderContextByKey.get(getOrderContextKey(storeKey, orderNumber)) || null;
+    }
+
+    function ensureStoreRuntime(storeKey) {
+        if (!state.storeRuntimeByKey[storeKey]) {
+            state.storeRuntimeByKey[storeKey] = {
+                token: "",
+                tokenStatus: "unknown",
+                tokenExpiresAt: 0,
+                refreshPromise: null,
+                uniscid: "",
+                regionTree: {},
+                lastError: ""
+            };
+        }
+        return state.storeRuntimeByKey[storeKey];
     }
 
     function getStoreDisplayName(store, index) {
@@ -159,13 +251,43 @@
         const parsed = raw ? safeParseJSON(raw, null) : null;
         if (parsed && parsed.stores && typeof parsed.stores === "object") {
             state.orderQueueByStore = {
-                version: 1,
+                version: 2,
                 updatedAt: parsed.updatedAt || Date.now(),
-                stores: parsed.stores
+                stores: Object.fromEntries(Object.entries(parsed.stores).map(([storedStoreKey, bucket]) => {
+                    const storeKey = resolvePersistedStoreKey(storedStoreKey);
+                    return [
+                    storeKey,
+                    {
+                        storeNameSnapshot: bucket?.storeNameSnapshot || getStoreContext(storeKey).storeName,
+                        storeIndex: bucket?.storeIndex ?? getStoreIndexByKey(storeKey),
+                        orders: Object.fromEntries(Object.entries(bucket?.orders || {}).map(([orderNumber, item]) => ([
+                            orderNumber,
+                            {
+                                ...item,
+                                storeKey,
+                                storeNameSnapshot: item?.storeNameSnapshot || bucket?.storeNameSnapshot || getStoreContext(storeKey).storeName,
+                                storeIndex: item?.storeIndex ?? bucket?.storeIndex ?? getStoreIndexByKey(storeKey),
+                                version: 2,
+                                retryCount: Number(item?.retryCount || 0),
+                                lastError: item?.lastError || "",
+                                lastPushAt: item?.lastPushAt || 0,
+                                pendingNotification: item?.pendingNotification || "",
+                                queryRetryCount: Number(item?.queryRetryCount ?? item?.retryCount ?? 0),
+                                queryLastError: item?.queryLastError ?? item?.lastError ?? "",
+                                queryLastCheckAt: item?.queryLastCheckAt ?? item?.lastCheckAt ?? 0,
+                                notificationRetryCount: Number(item?.notificationRetryCount || 0),
+                                notificationLastError: item?.notificationLastError || "",
+                                notificationLastAttemptAt: item?.notificationLastAttemptAt ?? item?.lastPushAt ?? 0
+                            }
+                        ])))
+                    }
+                ];
+                }))
             };
         } else {
-            state.orderQueueByStore = { version: 1, updatedAt: Date.now(), stores: {} };
+            state.orderQueueByStore = { version: 2, updatedAt: Date.now(), stores: {} };
         }
+        saveOrderQueue();
     }
 
     function saveOrderQueue() {
@@ -175,7 +297,12 @@
 
     function loadOrderPushSentMap() {
         const raw = localStorage.getItem(CONSTANTS.ORDER_PUSH_SENT_KEY);
-        state.orderPushSentMap = raw ? safeParseJSON(raw, {}) : {};
+        const parsed = raw ? safeParseJSON(raw, {}) : {};
+        state.orderPushSentMap = Object.fromEntries(Object.entries(parsed || {}).map(([key, value]) => {
+            const parts = key.split('|');
+            if (parts.length >= 3) parts[0] = resolvePersistedStoreKey(parts[0]);
+            return [parts.join('|'), value];
+        }));
         if (!state.orderPushSentMap || typeof state.orderPushSentMap !== "object") {
             state.orderPushSentMap = {};
         }
@@ -223,7 +350,12 @@
 
     function ensureStoreQueueBucket(storeKey) {
         if (!state.orderQueueByStore.stores[storeKey]) {
-            state.orderQueueByStore.stores[storeKey] = { orders: {} };
+            const context = getStoreContext(storeKey);
+            state.orderQueueByStore.stores[storeKey] = {
+                storeNameSnapshot: context.storeName,
+                storeIndex: context.storeIndex,
+                orders: {}
+            };
         } else if (!state.orderQueueByStore.stores[storeKey].orders) {
             state.orderQueueByStore.stores[storeKey].orders = {};
         }
@@ -233,11 +365,26 @@
     function enqueueOrder(storeKey, orderNumber, meta = {}) {
         addLog(`订单[${orderNumber}]入队轮询，所属门店[${storeKey}]`, "info");
         const bucket = ensureStoreQueueBucket(storeKey);
+        const context = getStoreContext(storeKey, meta);
         bucket.orders[orderNumber] = {
+            version: 2,
+            storeKey,
+            storeNameSnapshot: meta.storeNameSnapshot || context.storeName,
+            storeIndex: meta.storeIndex ?? context.storeIndex,
             lastState: Number(meta.lastState ?? 0),
             buyerMobile: meta.buyerMobile || "",
             createdAt: meta.createdAt || Date.now(),
-            lastCheckAt: meta.lastCheckAt || 0
+            lastCheckAt: meta.lastCheckAt || 0,
+            retryCount: Number(meta.retryCount || 0),
+            lastError: meta.lastError || "",
+            lastPushAt: meta.lastPushAt || 0,
+            pendingNotification: meta.pendingNotification || "",
+            queryRetryCount: Number(meta.queryRetryCount ?? meta.retryCount ?? 0),
+            queryLastError: meta.queryLastError ?? meta.lastError ?? "",
+            queryLastCheckAt: meta.queryLastCheckAt ?? meta.lastCheckAt ?? 0,
+            notificationRetryCount: Number(meta.notificationRetryCount || 0),
+            notificationLastError: meta.notificationLastError || "",
+            notificationLastAttemptAt: meta.notificationLastAttemptAt ?? meta.lastPushAt ?? 0
         };
         saveOrderQueue();
         invalidateQueuedOrdersCache();
@@ -281,7 +428,11 @@
         return list;
     }
 
-    function findOrderInQueue(orderNumber) {
+    function findOrderInQueue(orderNumber, preferredStoreKey = "") {
+        if (preferredStoreKey) {
+            const preferred = state.orderQueueByStore.stores?.[preferredStoreKey]?.orders?.[orderNumber];
+            if (preferred) return { storeKey: preferredStoreKey, item: preferred };
+        }
         for (const storeKey in state.orderQueueByStore.stores) {
             const orders = state.orderQueueByStore.stores[storeKey].orders;
             if (orders && orders[orderNumber]) {
@@ -307,7 +458,13 @@
         const raw = localStorage.getItem(CONSTANTS.DRAFTS_KEY);
         const parsed = raw ? safeParseJSON(raw, null) : null;
         if (parsed && parsed.drafts && typeof parsed.drafts === "object") {
-            state.draftsData = { version: 1, drafts: parsed.drafts };
+            state.draftsData = {
+                version: 2,
+                drafts: Object.fromEntries(Object.entries(parsed.drafts).map(([storeKey, drafts]) => ([
+                    resolvePersistedStoreKey(storeKey),
+                    drafts
+                ])))
+            };
         } else {
             state.draftsData = { version: 1, drafts: {} };
         }
@@ -674,49 +831,64 @@
         return _TOKEN_ERROR_KEYWORDS.some(kw => msg.includes(kw));
     }
 
-    async function _refreshTokenAndRetry(endpoint, method, data, oldToken) {
-        if (state._isRefreshingToken) return null;
-        state._isRefreshingToken = true;
-        addLog(`Token 失效，自动刷新中...`, "warn");
-
-        const payload = state.loginPayload || "";
-        const tokenRes = payload ? await requestTokenByPayload(payload) : null;
-
-        state._isRefreshingToken = false;
-
-        if (tokenRes?.code === 0 && tokenRes.data) {
-            addLog(`Token 刷新成功，重试请求 [${endpoint}]`, "info");
-            state.currentToken = tokenRes.data;
-            await checkTokenStatus();
-
-            const headers = { "Content-Type": "application/json" };
-            headers["token"] = state.currentToken;
-            let url = `${CONSTANTS.LONGE_API_BASE}${endpoint}`;
-            const options = { method, headers };
-            if (method === 'GET' && data) {
-                url += `?${new URLSearchParams(data).toString()}`;
-            } else if (method !== 'GET' && data !== null && data !== undefined) {
-                options.body = JSON.stringify(data);
-            }
-            try {
-                const resp = await fetch(url, options);
-                const retryRes = await resp.json();
-                if (retryRes.code !== 0) {
-                    addLog(`API [${endpoint}] 返回业务错误: ${retryRes.msg}`, "warn");
-                }
-                return retryRes;
-            } catch (e) {
-                addLog(`网络请求失败[${endpoint}]: ${e.message}`, "error");
-                return null;
-            }
+    async function fetchWithTimeout(url, options = {}, timeoutMs = CONSTANTS.ORDER_REQUEST_TIMEOUT_MS) {
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+        try {
+            const response = await fetch(url, controller ? { ...options, signal: controller.signal } : options);
+            return await response.json();
+        } finally {
+            if (timer) clearTimeout(timer);
         }
-
-        addLog(`Token 刷新失败: ${tokenRes?.msg || '未知错误'}`, "error");
-        showError(`登录已失效，请重新配置`);
-        return null;
     }
 
-    async function callApiWithToken(token, endpoint, method = 'GET', data = null) {
+    async function refreshTokenForStore(storeKey) {
+        const runtime = ensureStoreRuntime(storeKey);
+        if (runtime.refreshPromise) return runtime.refreshPromise;
+
+        const store = getStoreByKey(storeKey);
+        if (!store?.payload?.trim()) {
+            runtime.tokenStatus = "missing";
+            runtime.lastError = "未配置 Payload";
+            return "";
+        }
+
+        runtime.refreshPromise = (async () => {
+            addLog(`门店[${getStoreContext(storeKey).storeName}] Token 刷新中`, "warn");
+            const tokenRes = await requestTokenByPayload(store.payload.trim());
+            if (tokenRes?.code === 0 && tokenRes.data) {
+                runtime.token = tokenRes.data;
+                runtime.tokenStatus = "valid";
+                runtime.lastError = "";
+                if (storeKey === getCurrentStoreKey()) state.currentToken = tokenRes.data;
+                addLog(`门店[${getStoreContext(storeKey).storeName}] Token 刷新成功`, "info");
+                return runtime.token;
+            }
+            runtime.token = "";
+            runtime.tokenStatus = "invalid";
+            runtime.lastError = tokenRes?.msg || "Token 获取失败";
+            addLog(`门店[${getStoreContext(storeKey).storeName}] Token 刷新失败`, "error");
+            return "";
+        })().finally(() => {
+            runtime.refreshPromise = null;
+        });
+
+        return runtime.refreshPromise;
+    }
+
+    async function _refreshTokenAndRetry(storeKey, endpoint, method, data) {
+        const token = await refreshTokenForStore(storeKey);
+        if (!token) {
+            if (storeKey === getCurrentStoreKey()) {
+                showError(`登录已失效，请重新配置`);
+            }
+            return null;
+        }
+        addLog(`使用门店[${getStoreContext(storeKey).storeName}]新Token重试请求 [${endpoint}]`, "info");
+        return callApiWithToken(token, endpoint, method, data, storeKey, false);
+    }
+
+    async function callApiWithToken(token, endpoint, method = 'GET', data = null, storeKey = getCurrentStoreKey(), retryOnTokenError = true) {
         const headers = {
             "Content-Type": "application/json",
             token
@@ -732,12 +904,11 @@
         }
 
         try {
-            const response = await fetch(url, options);
-            const result = await response.json();
+            const result = await fetchWithTimeout(url, options);
             if (result.code !== 0) {
                 addLog(`接口响应异常[${endpoint}]: ${result.msg}`, "warn");
-                if (_isTokenError(result)) {
-                    const retryResult = await _refreshTokenAndRetry(endpoint, method, data, token);
+                if (retryOnTokenError && _isTokenError(result)) {
+                    const retryResult = await _refreshTokenAndRetry(storeKey, endpoint, method, data);
                     if (retryResult !== null) return retryResult;
                 }
             }
@@ -749,21 +920,9 @@
     }
 
     async function getTokenForStoreKey(storeKey) {
-        const storeIndex = parseStoreIndexFromKey(storeKey);
-        const store = state.storePayloads[storeIndex];
-        if (!store?.payload?.trim()) return "";
-
-        if (storeIndex === state.currentStoreIndex && state.currentToken) {
-            return state.currentToken;
-        }
-
-        addLog(`正在为[${storeKey}]后台换取Token...`, "info");
-        const tokenRes = await requestTokenByPayload(store.payload.trim());
-        if (tokenRes?.code === 0 && tokenRes.data) {
-            return tokenRes.data;
-        }
-
-        return "";
+        const runtime = ensureStoreRuntime(storeKey);
+        if (runtime.token) return runtime.token;
+        return refreshTokenForStore(storeKey);
     }
 
     function stopPolling() {
@@ -981,22 +1140,29 @@
     async function exportFullConfig() {
         try {
             const configData = {
-                stores: state.storePayloads,
+                schemaVersion: CONSTANTS.STORE_CONFIG_VERSION,
+                stores: state.storePayloads.map(store => ({
+                    storeKey: store.storeKey,
+                    name: store.name,
+                    shopName: store.shopName,
+                    verified: store.verified,
+                    payload: "***"
+                })),
                 currentIndex: state.currentStoreIndex,
-                dingWebhook: localStorage.getItem(CONSTANTS.DINGTALK_WEBHOOK_KEY),
-                dingSecret: localStorage.getItem(CONSTANTS.DINGTALK_SECRET_KEY),
+                dingWebhook: state.dingTalkWebhook ? "***" : "",
+                dingSecret: state.dingTalkSecret ? "***" : "",
                 aiEnable: localStorage.getItem(CONSTANTS.AI_ENABLE_KEY),
                 aiEndpoint: localStorage.getItem(CONSTANTS.AI_ENDPOINT_KEY),
                 aiModel: localStorage.getItem(CONSTANTS.AI_MODEL_KEY),
-                aiKey: localStorage.getItem(CONSTANTS.AI_KEY_KEY),
+                aiKey: state.aiKey ? "***" : "",
                 exportTime: new Date().toLocaleString()
             };
 
             const configStr = JSON.stringify(configData);
             await navigator.clipboard.writeText(configStr);
 
-            showSnackbar({ message: "配置已复制到剪贴板！" });
-            addLog("执行导出配置：数据已写入剪贴板", "info");
+            showSnackbar({ message: "脱敏配置已复制；Payload、Secret 和 AI Key 未导出" });
+            addLog("执行脱敏配置导出", "info");
         } catch (err) {
             showError("导出失败: " + err);
             addLog("导出配置失败: " + err, "error");
@@ -1023,14 +1189,39 @@
         try {
             const data = JSON.parse(input);
 
-            if (data.stores) localStorage.setItem(CONSTANTS.STORE_PAYLOADS_KEY, JSON.stringify(data.stores));
-            if (data.currentIndex !== undefined) localStorage.setItem(CONSTANTS.CURRENT_STORE_INDEX_KEY, String(data.currentIndex));
-            if (data.dingWebhook !== undefined) localStorage.setItem(CONSTANTS.DINGTALK_WEBHOOK_KEY, data.dingWebhook || "");
-            if (data.dingSecret !== undefined) localStorage.setItem(CONSTANTS.DINGTALK_SECRET_KEY, data.dingSecret || "");
+            if (!Array.isArray(data.stores) || !data.stores.length || data.stores.length > 50) {
+                throw new Error("门店配置必须是1至50项的数组");
+            }
+            const storeKeys = new Set();
+            const stores = data.stores.map((item, index) => {
+                if (!item || typeof item !== 'object' || Array.isArray(item)) throw new Error(`门店${index + 1}格式无效`);
+                const storeKey = typeof item.storeKey === 'string' && item.storeKey.trim() ? item.storeKey.trim() : createStoreKey();
+                if (storeKeys.has(storeKey)) throw new Error("门店稳定ID重复");
+                storeKeys.add(storeKey);
+                const existingStore = state.storePayloads.find(store => store.storeKey === storeKey)
+                    || state.storePayloads.find(store => store.shopName && store.shopName === item.shopName);
+                const payload = item.payload === "***"
+                    ? (existingStore?.payload || "")
+                    : (typeof item.payload === 'string' ? item.payload : "");
+                return {
+                    storeKey,
+                    name: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : `门店${index + 1}`,
+                    shopName: typeof item.shopName === 'string' ? item.shopName : "",
+                    payload,
+                    verified: !!item.verified && !!payload
+                };
+            });
+            const currentIndex = Number(data.currentIndex);
+            const safeIndex = Number.isInteger(currentIndex) && currentIndex >= 0 && currentIndex < stores.length ? currentIndex : 0;
+
+            localStorage.setItem(CONSTANTS.STORE_PAYLOADS_KEY, JSON.stringify({ version: CONSTANTS.STORE_CONFIG_VERSION, stores }));
+            localStorage.setItem(CONSTANTS.CURRENT_STORE_INDEX_KEY, String(safeIndex));
+            if (data.dingWebhook !== undefined && data.dingWebhook !== "***") localStorage.setItem(CONSTANTS.DINGTALK_WEBHOOK_KEY, typeof data.dingWebhook === 'string' ? data.dingWebhook : "");
+            if (data.dingSecret !== undefined && data.dingSecret !== "***") localStorage.setItem(CONSTANTS.DINGTALK_SECRET_KEY, typeof data.dingSecret === 'string' ? data.dingSecret : "");
             if (data.aiEnable !== undefined) localStorage.setItem(CONSTANTS.AI_ENABLE_KEY, String(data.aiEnable));
             if (data.aiEndpoint !== undefined) localStorage.setItem(CONSTANTS.AI_ENDPOINT_KEY, data.aiEndpoint || "");
             if (data.aiModel !== undefined) localStorage.setItem(CONSTANTS.AI_MODEL_KEY, data.aiModel || "");
-            if (data.aiKey !== undefined) localStorage.setItem(CONSTANTS.AI_KEY_KEY, data.aiKey || "");
+            if (data.aiKey !== undefined && data.aiKey !== "***") localStorage.setItem(CONSTANTS.AI_KEY_KEY, typeof data.aiKey === 'string' ? data.aiKey : "");
 
             addLog("导入配置成功，准备重启应用", "info");
 
@@ -1087,6 +1278,10 @@
             valueInput.variant = 'outlined';
             valueInput.rows = 2;
             valueInput.value = value;
+            if (/PAYLOAD|TOKEN|SECRET|WEBHOOK|AI_PARSE_KEY/i.test(key)) {
+                valueInput.type = 'password';
+                valueInput.togglePassword = true;
+            }
 
             const btnRow = document.createElement('div');
             btnRow.style.display = 'flex';
@@ -1177,10 +1372,14 @@
     function addLog(msg, level = 'info') {
         const container = document.getElementById('debugLogContent');
         const time = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        const safeMessage = String(msg || "")
+            .replace(/\b1[3-9]\d{9}\b/g, value => `${value.slice(0, 3)}****${value.slice(-4)}`)
+            .replace(/\b\d{12,}\b/g, value => `${value.slice(0, 4)}***${value.slice(-4)}`)
+            .replace(/(token|secret|webhook|authorization|api[_ -]?key)\s*[:=]\s*[^\s,;]+/gi, '$1=***');
 
         const logEl = document.createElement('div');
         logEl.className = `log-entry log-level-${level}`;
-        logEl.innerHTML = `<span class="log-time">[${escapeHtml(time)}]</span>${escapeHtml(msg)}`;
+        logEl.innerHTML = `<span class="log-time">[${escapeHtml(time)}]</span>${escapeHtml(safeMessage)}`;
 
         container.appendChild(logEl);
         container.scrollTop = container.scrollHeight;
@@ -1189,9 +1388,9 @@
             container.removeChild(container.firstChild);
         }
 
-        if (level === 'error') console.error(`[${time}] ${msg}`);
-        else if (level === 'warn') console.warn(`[${time}] ${msg}`);
-        else console.log(`[${time}] ${msg}`);
+        if (level === 'error') console.error(`[${time}] ${safeMessage}`);
+        else if (level === 'warn') console.warn(`[${time}] ${safeMessage}`);
+        else console.log(`[${time}] ${safeMessage}`);
     }
 
     function clearDebugLogs() {
@@ -1207,8 +1406,10 @@
         if (storedList) {
             try {
                 const parsed = JSON.parse(storedList);
-                if (Array.isArray(parsed) && parsed.length) {
-                    state.storePayloads = parsed.map((item, idx) => ({
+                const parsedStores = Array.isArray(parsed) ? parsed : parsed?.stores;
+                if (Array.isArray(parsedStores) && parsedStores.length) {
+                    state.storePayloads = parsedStores.map((item, idx) => ({
+                        storeKey: typeof item?.storeKey === "string" && item.storeKey.trim() ? item.storeKey.trim() : `legacy_store_${idx}`,
                         name: item?.name || `门店${idx + 1}`,
                         payload: item?.payload || "",
                         shopName: item?.shopName || "",
@@ -1222,6 +1423,7 @@
 
         if (!state.storePayloads.length) {
             state.storePayloads = [{
+                storeKey: "legacy_store_0",
                 name: "门店1",
                 payload: legacyPayload,
                 shopName: "",
@@ -1234,24 +1436,30 @@
     }
 
     function persistStorePayloads() {
-        localStorage.setItem(CONSTANTS.STORE_PAYLOADS_KEY, JSON.stringify(state.storePayloads));
+        state.storeConfigRevision += 1;
+        localStorage.setItem(CONSTANTS.STORE_PAYLOADS_KEY, JSON.stringify({
+            version: CONSTANTS.STORE_CONFIG_VERSION,
+            stores: state.storePayloads
+        }));
         localStorage.setItem(CONSTANTS.CURRENT_STORE_INDEX_KEY, String(state.currentStoreIndex));
         localStorage.setItem(CONSTANTS.CONFIG_KEY, state.storePayloads[state.currentStoreIndex]?.payload || "");
     }
 
     function renderPayloadInputs() {
         els.payloadList.innerHTML = '';
+        const stores = state.configDraft || state.storePayloads;
+        const selectedIndex = state.configDraft ? state.configDraftCurrentIndex : state.currentStoreIndex;
 
-        state.storePayloads.forEach((store, index) => {
+        stores.forEach((store, index) => {
             const item = document.createElement('div');
-            item.className = `payload-item ${index === state.currentStoreIndex ? 'active' : ''}`;
+            item.className = `payload-item ${index === selectedIndex ? 'active' : ''}`;
 
             item.innerHTML = `
                 <div class="payload-item-header">
                     <mdui-radio
                         name="store-payload-radio"
                         value="${index}"
-                        ${index === state.currentStoreIndex ? 'checked' : ''}
+                        ${index === selectedIndex ? 'checked' : ''}
                         style="flex: 1; font-size: 14px; font-weight: 600; color: rgb(var(--mdui-color-primary));"
                     >
                         ${`门店 ${index + 1}`}
@@ -1261,7 +1469,7 @@
                             <mdui-button-icon icon="verified" class="validate-payload-btn" data-index="${index}"></mdui-button-icon>
                         </mdui-tooltip>
                         <mdui-tooltip content="删除">
-                            <mdui-button-icon icon="delete" class="remove-payload-btn" data-index="${index}" style="color: rgb(var(--mdui-color-error));" ${state.storePayloads.length <= 1 ? 'disabled' : ''}></mdui-button-icon>
+                            <mdui-button-icon icon="delete" class="remove-payload-btn" data-index="${index}" style="color: rgb(var(--mdui-color-error));" ${stores.length <= 1 ? 'disabled' : ''}></mdui-button-icon>
                         </mdui-tooltip>
                     </div>
                 </div>
@@ -1271,6 +1479,8 @@
                     label="Login Payload (Code)"
                     helper="${escapeHtml(`${getStoreDisplayName(store, index)} · ${store.verified ? '已验证' : '未验证'}`)}"
                     variant="outlined"
+                    type="password"
+                    toggle-password
                     clearable
                 ></mdui-text-field>
             `;
@@ -1281,7 +1491,7 @@
         setTimeout(() => {
             document.querySelectorAll('[data-payload-index]').forEach(input => {
                 const idx = Number(input.getAttribute('data-payload-index'));
-                input.value = state.storePayloads[idx]?.payload || "";
+                input.value = stores[idx]?.payload || "";
             });
         }, 0);
     }
@@ -1300,19 +1510,26 @@
     }
 
     function syncPayloadsFromInputs() {
+        if (!state.configDraft) return;
         const inputs = document.querySelectorAll('[data-payload-index]');
         inputs.forEach(input => {
             const idx = Number(input.getAttribute('data-payload-index'));
-            if (state.storePayloads[idx]) {
-                state.storePayloads[idx].payload = input.value || "";
+            if (state.configDraft[idx]) {
+                const nextPayload = input.value || "";
+                if (state.configDraft[idx].payload !== nextPayload) {
+                    state.configDraft[idx].verified = false;
+                    state.configDraft[idx].payload = nextPayload;
+                }
             }
         });
     }
 
     function addPayloadEntry() {
+        if (!state.configDraft) return;
         syncPayloadsFromInputs();
-        state.storePayloads.push({
-            name: `门店${state.storePayloads.length + 1}`,
+        state.configDraft.push({
+            storeKey: createStoreKey(),
+            name: `门店${state.configDraft.length + 1}`,
             payload: "",
             shopName: "",
             verified: false
@@ -1321,31 +1538,47 @@
     }
 
     function removePayloadEntry(index) {
+        if (!state.configDraft) return;
         syncPayloadsFromInputs();
 
-        if (state.storePayloads.length <= 1) {
+        if (state.configDraft.length <= 1) {
             showSnackbar({ message: "至少需要保留一个门店配置" });
             return;
         }
 
-        state.storePayloads.splice(index, 1);
-
-        if (state.currentStoreIndex > index) {
-            state.currentStoreIndex -= 1;
-        } else if (state.currentStoreIndex >= state.storePayloads.length) {
-            state.currentStoreIndex = state.storePayloads.length - 1;
+        const store = state.configDraft[index];
+        const storeKey = getStoreKey(store, index);
+        const queuedCount = Object.keys(state.orderQueueByStore.stores?.[storeKey]?.orders || {}).length;
+        const draftCount = (state.draftsData.drafts?.[storeKey] || []).length;
+        if (queuedCount || draftCount) {
+            showError(`该门店仍有${queuedCount ? `${queuedCount}个待处理订单` : ''}${queuedCount && draftCount ? '和' : ''}${draftCount ? `${draftCount}个暂存订单` : ''}，请处理后再删除`);
+            return;
         }
 
-        state.loginPayload = state.storePayloads[state.currentStoreIndex]?.payload?.trim() || "";
-        persistStorePayloads();
-        renderPayloadInputs();
-        renderShopSwitchMenu();
-        updateShopNameDisplay();
+        mdui.confirm({
+            headline: "删除门店配置",
+            description: `确定删除 ${getStoreDisplayName(store, index)} 吗？保存设置后才会生效。`,
+            confirmText: "删除",
+            cancelText: "取消",
+            onConfirm: () => {
+                if (!state.configDraft) return;
+                state.configDraft.splice(index, 1);
+                if (state.configDraftCurrentIndex > index) {
+                    state.configDraftCurrentIndex -= 1;
+                } else if (state.configDraftCurrentIndex >= state.configDraft.length) {
+                    state.configDraftCurrentIndex = state.configDraft.length - 1;
+                }
+                renderPayloadInputs();
+            }
+        });
     }
 
     function setCurrentStoreIndex(index, relogin = true) {
-        syncPayloadsFromInputs();
+        state.currentUiGeneration += 1;
         state.currentStoreIndex = index;
+        state.currentToken = ensureStoreRuntime(getCurrentStoreKey()).token || "";
+        state.currentUniscid = ensureStoreRuntime(getCurrentStoreKey()).uniscid || "";
+        state.regionTree = ensureStoreRuntime(getCurrentStoreKey()).regionTree || {};
         state.loginPayload = state.storePayloads[state.currentStoreIndex]?.payload?.trim() || "";
         persistStorePayloads();
         renderPayloadInputs();
@@ -1355,6 +1588,13 @@
         if (relogin) {
             autoLogin();
         }
+    }
+
+    function setConfigDraftCurrentIndex(index) {
+        if (!state.configDraft || !state.configDraft[index]) return;
+        syncPayloadsFromInputs();
+        state.configDraftCurrentIndex = index;
+        renderPayloadInputs();
     }
 
     function updateShopNameDisplay() {
@@ -1371,6 +1611,8 @@
         els.shopSwitchMenu.classList.remove('open');
         if (index === state.currentStoreIndex) return;
         state.currentDraftId = null;
+        stopRemindPolling();
+        ProductSearch.resetCache();
         setCurrentStoreIndex(index, true);
         renderDraftBar();
         updateDraftBadge();
@@ -1380,12 +1622,11 @@
     async function requestTokenByPayload(rawPayload) {
         const payload = rawPayload ? safeParsePayload(rawPayload) : "";
         try {
-            const response = await fetch(`${CONSTANTS.LONGE_API_BASE}/miniUser/getToken`, {
+            return await fetchWithTimeout(`${CONSTANTS.LONGE_API_BASE}/miniUser/getToken`, {
                 method: 'POST',
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload)
             });
-            return await response.json();
         } catch (error) {
             addLog("Token请求异常: " + error.message, "error");
             return null;
@@ -1394,14 +1635,13 @@
 
     async function requestShopInfoByToken(token) {
         try {
-            const response = await fetch(`${CONSTANTS.LONGE_API_BASE}/salesuser/getSalesActivity`, {
+            return await fetchWithTimeout(`${CONSTANTS.LONGE_API_BASE}/salesuser/getSalesActivity`, {
                 method: 'GET',
                 headers: {
                     "Content-Type": "application/json",
                     token
                 }
             });
-            return await response.json();
         } catch (error) {
             addLog("门店信息请求异常: " + error.message, "error");
             return null;
@@ -1409,8 +1649,9 @@
     }
 
     async function validatePayloadEntry(index) {
+        if (!state.configDraft) return;
         syncPayloadsFromInputs();
-        const store = state.storePayloads[index];
+        const store = state.configDraft[index];
         const payloadText = store?.payload?.trim();
 
         if (!payloadText) {
@@ -1419,24 +1660,23 @@
 
         addLog(`正在验证门店${index + 1} 的Payload...`, "info");
         showSnackbar({ message: `正在验证 ${store.name || `门店${index + 1}`}` });
-        const tokenRes = await requestTokenByPayload(payloadText);
+        const storeKey = getStoreKey(store, index);
+        const tokenResult = await requestTokenByPayload(payloadText);
+        const tokenValue = tokenResult?.code === 0 ? tokenResult.data : "";
 
-        if (!(tokenRes?.code === 0 && tokenRes.data)) {
+        if (!tokenValue) {
             addLog(`验证失败: Token获取失败`, "error");
-            return showError(`验证失败：${tokenRes?.msg || 'Token获取失败'}`);
+            return showError(`验证失败：Token获取失败`);
         }
 
-        const shopRes = await requestShopInfoByToken(tokenRes.data);
+        const shopRes = await requestShopInfoByToken(tokenValue);
         if (shopRes?.code === 0) {
             const shopName = shopRes.data?.shopInfo?.shopName || store.name || `门店${index + 1}`;
             addLog(`验证成功: ${shopName}`, "info");
             store.shopName = shopName;
             store.name = shopName;
             store.verified = true;
-            persistStorePayloads();
             renderPayloadInputs();
-            renderShopSwitchMenu();
-            updateShopNameDisplay();
             showSnackbar({ message: `验证成功：${shopName}` });
         } else {
             addLog(`验证失败: ${shopRes?.msg || '无法解析门店信息'}`, "error");
@@ -1444,33 +1684,17 @@
         }
     }
 
-    async function callApi(endpoint, method = 'GET', data = null) {
-        const headers = { "Content-Type": "application/json" };
-        if (state.currentToken) headers["token"] = state.currentToken;
-
-        let url = `${CONSTANTS.LONGE_API_BASE}${endpoint}`;
-        const options = { method, headers };
-
-        if (method === 'GET' && data) {
-            url += `?${new URLSearchParams(data).toString()}`;
-        } else if (method !== 'GET' && data !== null && data !== undefined) {
-            options.body = JSON.stringify(data);
+    async function callApi(endpoint, method = 'GET', data = null, storeKey = getCurrentStoreKey()) {
+        const token = await getTokenForStoreKey(storeKey);
+        if (!token) {
+            addLog(`门店[${getStoreContext(storeKey).storeName}]没有可用Token`, "warn");
+            return null;
         }
-
         try {
-            const response = await fetch(url, options);
-            const res = await response.json();
-            if (res.code !== 0) {
-                addLog(`API [${endpoint}] 返回业务错误: ${res.msg}`, "warn");
-                if (_isTokenError(res)) {
-                    const retryResult = await _refreshTokenAndRetry(endpoint, method, data, state.currentToken);
-                    if (retryResult !== null) return retryResult;
-                }
-            }
-            return res;
+            return await callApiWithToken(token, endpoint, method, data, storeKey);
         } catch (error) {
-            addLog(`API [${endpoint}] 请求崩溃: ${error.message}`, "error");
-            showError("网络请求失败或跨域被拦截");
+            addLog(`API [${endpoint}] 请求失败`, "error");
+            if (storeKey === getCurrentStoreKey()) showError("网络请求失败或跨域被拦截");
             return null;
         }
     }
@@ -1495,12 +1719,12 @@
 
         if (!accessToken) {
             addLog("未配置钉钉Webhook，忽略推送请求", "warn");
-            return;
+            return { ok: false, code: "CONFIG_MISSING", message: "未配置钉钉Webhook" };
         }
 
         addLog("发起钉钉消息推送...", "info");
         try {
-            const response = await fetch(DINGTALK_API_BASE, {
+            const resData = await fetchWithTimeout(DINGTALK_API_BASE, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1509,17 +1733,18 @@
                     content
                 })
             });
-
-            const resData = await response.json();
             if (resData.errcode === 0 || resData.code === 0) {
                 addLog("钉钉推送成功响应", "info");
+                return { ok: true, code: resData.errcode ?? resData.code, message: resData.errmsg || resData.msg || "ok" };
             } else {
                 addLog(`钉钉推送返回错误: ${resData.errmsg || resData.msg}`, "error");
                 showSnackbar({ message: "钉钉推送失败: " + (resData.errmsg || resData.msg || "未知错误") });
+                return { ok: false, code: resData.errcode ?? resData.code, message: resData.errmsg || resData.msg || "未知错误" };
             }
         } catch (error) {
             addLog("钉钉推送网络异常: " + error.message, "error");
             showSnackbar({ message: "钉钉推送异常，请检查后端服务" });
+            return { ok: false, code: "NETWORK_ERROR", message: error.message };
         }
     }
 
@@ -1530,8 +1755,8 @@
             return showSnackbar({ message: "请先填写钉钉 Webhook 地址！" });
         }
         const testMsg = "测试消息：您已成功配置钉钉推送！\n\n张三 13800138000\n江苏省-常州市-武进区-南夏墅街道 城市大厦A座\n12345678\n测试商品\n0.01";
-        await sendDingTalkMessage(testMsg, webhookUrl, secretVal);
-        showSnackbar({ message: "测试推送请求已发送" });
+        const result = await sendDingTalkMessage(testMsg, webhookUrl, secretVal);
+        showSnackbar({ message: result?.ok ? "测试推送成功" : "测试推送失败" });
     }
 
     const isAndroid = /Android/i.test(navigator.userAgent);
@@ -1568,6 +1793,7 @@
         return [
             "订单支付成功！",
             "",
+            `所属门店：${order?.storeName || order?.storeNameSnapshot || "门店配置缺失"}`,
             "建行单号：",
             order?.ccbPayOrderNumber || "",
             `门店单号：${order?.shopOrderNumber || ""}`,
@@ -1580,7 +1806,7 @@
     }
 
     function buildDingTalkRefundMessage(data) {
-        const payOrder = data.payOrder;
+        const payOrder = data.payOrder || {};
         const refundOrderVo = data.refundOrderVos?.[0];
         const refundOrder = refundOrderVo?.buyerRefundOrder;
         const refundGoods = refundOrderVo?.refundGoodsOrderList?.[0];
@@ -1596,6 +1822,7 @@
         return [
             "订单发生了退款操作！",
             "",
+            `所属门店：${payOrder?.storeName || payOrder?.storeNameSnapshot || "门店配置缺失"}`,
             "建行单号：",
             payOrder?.ccbPayOrderNumber || "",
             `门店单号：${payOrder?.shopOrderNumber || ""}`,
@@ -1642,6 +1869,9 @@
         const { storeKey, orderNumber } = entry;
         const latestItem = state.orderQueueByStore.stores?.[storeKey]?.orders?.[orderNumber];
         if (!latestItem) return;
+        const now = Date.now();
+        const retryDelay = Math.min(CONSTANTS.ORDER_POLL_INTERVAL_MS * (2 ** Math.min(Number(latestItem.queryRetryCount || 0), 6)), 5 * 60 * 1000);
+        if (latestItem.queryLastError && latestItem.queryLastCheckAt && now - latestItem.queryLastCheckAt < retryDelay) return;
 
         if (!tokenCache[storeKey]) {
             tokenCache[storeKey] = await getTokenForStoreKey(storeKey);
@@ -1649,43 +1879,98 @@
 
         const token = tokenCache[storeKey];
         if (!token) {
-            addLog(`无法获取门店[${storeKey}]的Token，跳过单号[${orderNumber}]`, "warn");
+            latestItem.lastCheckAt = now;
+            latestItem.queryLastCheckAt = now;
+            latestItem.queryRetryCount = Number(latestItem.queryRetryCount || 0) + 1;
+            latestItem.queryLastError = "Token 获取失败";
+            saveOrderQueue();
+            addLog(`无法获取门店[${latestItem.storeNameSnapshot || getStoreContext(storeKey).storeName}]的Token，跳过订单`, "warn");
             return;
         }
 
-        const res = await callApiWithToken(token, '/salesuser/getSalesOrderDetail', 'GET', { orderNumber });
-        if (!(res?.code === 0 && res.data?.payOrder)) return;
+        const res = await callApiWithToken(token, '/salesuser/getSalesOrderDetail', 'GET', { orderNumber }, storeKey);
+        tokenCache[storeKey] = ensureStoreRuntime(storeKey).token || token;
+        if (!(res?.code === 0 && res.data?.payOrder)) {
+            latestItem.lastCheckAt = now;
+            latestItem.queryLastCheckAt = now;
+            latestItem.queryRetryCount = Number(latestItem.queryRetryCount || 0) + 1;
+            latestItem.queryLastError = res?.msg || "订单详情查询失败";
+            saveOrderQueue();
+            return;
+        }
 
-        const order = res.data.payOrder;
+        const order = attachOrderContext(res.data.payOrder, storeKey, latestItem);
         const newState = Number(order.payState);
         const oldState = Number(latestItem.lastState ?? 0);
 
         latestItem.lastState = newState;
         latestItem.lastCheckAt = Date.now();
+        latestItem.queryLastCheckAt = latestItem.lastCheckAt;
+        latestItem.queryRetryCount = 0;
+        latestItem.queryLastError = "";
         saveOrderQueue();
 
-        if (newState !== oldState) {
-            await handleOrderStateChange(storeKey, orderNumber, order, newState, oldState, latestItem);
+        const notificationDelay = Math.min(CONSTANTS.ORDER_POLL_INTERVAL_MS * (2 ** Math.min(Number(latestItem.notificationRetryCount || 0), 6)), 5 * 60 * 1000);
+        const notificationReady = !latestItem.pendingNotification || !latestItem.notificationLastError || !latestItem.notificationLastAttemptAt || Date.now() - latestItem.notificationLastAttemptAt >= notificationDelay;
+        if (newState !== oldState || (latestItem.pendingNotification && notificationReady) || (newState === 2 && !isOrderPushed(storeKey, orderNumber, "PAID") && notificationReady)) {
+            await handleOrderStateChange(storeKey, orderNumber, order, newState, oldState, latestItem, res.data);
         }
     }
 
-    async function handleOrderStateChange(storeKey, orderNumber, order, newState, oldState, latestItem) {
-        addLog(`订单[${orderNumber}]状态变更: ${payStates[oldState] || '未知'} -> ${payStates[newState] || '未知'}`, "info");
+    async function handleOrderStateChange(storeKey, orderNumber, order, newState, oldState, latestItem, detailData = {}) {
+        if (newState !== oldState) {
+            addLog(`订单[${orderNumber}]状态变更: ${payStates[oldState] || '未知'} -> ${payStates[newState] || '未知'}`, "info");
+        }
 
-        if (newState === 2) {
+        if (newState === 2 && newState !== oldState) {
             showNotification("订单支付成功", `订单号尾号: ${orderNumber.slice(-4)}\n状态: 已付款`);
         }
 
         if (ORDER_TERMINAL_STATES.includes(newState)) {
+            if (latestItem.pendingNotification === "REFUND" && !isOrderPushed(storeKey, orderNumber, "REFUND")) {
+                if (!Array.isArray(detailData.refundOrderVos) || !detailData.refundOrderVos.length) {
+                    latestItem.notificationRetryCount = Number(latestItem.notificationRetryCount || 0) + 1;
+                    latestItem.notificationLastError = "退款详情尚未就绪";
+                    latestItem.notificationLastAttemptAt = Date.now();
+                    saveOrderQueue();
+                    return;
+                }
+                const refundMessage = buildDingTalkRefundMessage({ ...detailData, payOrder: order });
+                const refundPushResult = await sendDingTalkMessage(refundMessage);
+                latestItem.lastPushAt = Date.now();
+                latestItem.notificationLastAttemptAt = latestItem.lastPushAt;
+                if (!refundPushResult?.ok) {
+                    latestItem.notificationRetryCount = Number(latestItem.notificationRetryCount || 0) + 1;
+                    latestItem.notificationLastError = refundPushResult?.message || "退款通知推送失败";
+                    saveOrderQueue();
+                    return;
+                }
+                latestItem.pendingNotification = "";
+                latestItem.notificationRetryCount = 0;
+                latestItem.notificationLastError = "";
+                markOrderPushed(storeKey, orderNumber, "REFUND");
+            }
             if (newState === 2 && !isOrderPushed(storeKey, orderNumber, "PAID")) {
-                if (els.qrDialog.open && state.currentQrOrderNumber === orderNumber) {
+                if (els.qrDialog.open && state.currentQrOrderContext?.storeKey === storeKey && state.currentQrOrderContext?.ccbPayOrderNumber === orderNumber) {
                     els.qrDialog.open = false;
                     showSnackbar({ message: "付款成功！" });
                 }
 
                 addLog(`订单[${orderNumber}]支付完成，准备发起推送`, "info");
                 const msg = buildDingTalkOrderMessage(order, latestItem.buyerMobile || "");
-                await sendDingTalkMessage(msg);
+                const pushResult = await sendDingTalkMessage(msg);
+                latestItem.lastPushAt = Date.now();
+                latestItem.notificationLastAttemptAt = latestItem.lastPushAt;
+                if (!pushResult?.ok) {
+                    latestItem.pendingNotification = "PAID";
+                    latestItem.notificationRetryCount = Number(latestItem.notificationRetryCount || 0) + 1;
+                    latestItem.notificationLastError = pushResult?.message || "钉钉推送失败";
+                    saveOrderQueue();
+                    return;
+                }
+                latestItem.pendingNotification = "";
+                latestItem.notificationRetryCount = 0;
+                latestItem.notificationLastError = "";
                 markOrderPushed(storeKey, orderNumber, "PAID");
             }
 
@@ -1705,6 +1990,9 @@
     }
 
     async function autoLogin() {
+        const loginGeneration = ++state.currentUiGeneration;
+        const loginIndex = state.currentStoreIndex;
+        const storeKey = getCurrentStoreKey();
         const currentStore = state.storePayloads[state.currentStoreIndex];
         state.loginPayload = currentStore?.payload?.trim() || "";
 
@@ -1719,23 +2007,30 @@
         updateStatus(false, "正在连接...");
         updateShopNameDisplay();
 
-        const payload = state.loginPayload ? safeParsePayload(state.loginPayload) : "";
-        const res = await callApi('/miniUser/getToken', 'POST', payload);
+        const token = await refreshTokenForStore(storeKey);
 
-        if (res?.code === 0 && res.data) {
+        if (loginGeneration !== state.currentUiGeneration || loginIndex !== state.currentStoreIndex) {
+            return;
+        }
+
+        if (token) {
             addLog("Token 获取成功", "info");
-            state.currentToken = res.data;
-            await checkTokenStatus();
-            fetchRegionData();
+            const runtime = ensureStoreRuntime(storeKey);
+            runtime.token = token;
+            runtime.tokenStatus = "valid";
+            state.currentToken = token;
+            await checkTokenStatus(storeKey, loginGeneration);
+            if (loginGeneration === state.currentUiGeneration) fetchRegionData(storeKey, loginGeneration);
         } else {
-            addLog(`Token 获取失败: ${res?.msg}`, "error");
+            addLog(`Token 获取失败`, "error");
             updateStatus(false, "Token获取失败");
-            showError(`登录失败: ${res?.msg || '请检查配置'}`);
+            showError(`登录失败: 请检查配置`);
         }
     }
 
-    async function checkTokenStatus() {
-        const res = await callApi('/salesuser/getSalesActivity', 'GET');
+    async function checkTokenStatus(storeKey = getCurrentStoreKey(), uiGeneration = state.currentUiGeneration) {
+        const res = await callApi('/salesuser/getSalesActivity', 'GET', null, storeKey);
+        if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) return;
         if (res?.code === 0) {
             addLog("Token 状态校验通过", "info");
             updateStatus(true);
@@ -1743,6 +2038,7 @@
             const uniscid = res.data?.shopInfo?.uniscid || "";
             if (uniscid) {
                 state.currentUniscid = uniscid;
+                ensureStoreRuntime(storeKey).uniscid = uniscid;
                 addLog(`获取到 uniscid: ${uniscid}`, "info");
             }
             if (shopName) {
@@ -1773,6 +2069,8 @@
     }
 
     function openConfigDialog() {
+        state.configDraft = JSON.parse(JSON.stringify(state.storePayloads));
+        state.configDraftCurrentIndex = state.currentStoreIndex;
         renderPayloadInputs();
         els.dingWebhookInput.value = state.dingTalkWebhook;
         els.dingSecretInput.value = state.dingTalkSecret;
@@ -1787,24 +2085,49 @@
 
     function closeConfigDialog() {
         els.configDialog.open = false;
+        state.configDraft = null;
     }
 
     function saveConfig() {
+        if (!state.configDraft) return closeConfigDialog();
         syncPayloadsFromInputs();
 
-        const validPayloads = state.storePayloads.filter(item => item.payload && item.payload.trim());
+        const validPayloads = state.configDraft.filter(item => item.payload && item.payload.trim());
         if (!validPayloads.length) {
             return showSnackbar({ message: "请至少填写一个 Payload" });
         }
 
-        state.storePayloads = state.storePayloads.map((item, idx) => ({
+        const previousStoresByKey = new Map(state.storePayloads.map((store, index) => [
+            getStoreKey(store, index),
+            store,
+        ]));
+        const nextStores = state.configDraft.map((item, idx) => ({
             ...item,
             name: item.shopName || item.name || `门店${idx + 1}`
         }));
+        nextStores.forEach((store, index) => {
+            const storeKey = getStoreKey(store, index);
+            const previousStore = previousStoresByKey.get(storeKey);
+            if (!previousStore || previousStore.payload !== store.payload) {
+                delete state.storeRuntimeByKey[storeKey];
+            }
+            previousStoresByKey.delete(storeKey);
+        });
+        previousStoresByKey.forEach((_, storeKey) => {
+            delete state.storeRuntimeByKey[storeKey];
+        });
+        state.storePayloads = nextStores;
 
-        if (state.currentStoreIndex >= state.storePayloads.length) {
-            state.currentStoreIndex = 0;
-        }
+        state.currentStoreIndex = Math.min(
+            Math.max(state.configDraftCurrentIndex, 0),
+            state.storePayloads.length - 1,
+        );
+        state.configDraft = null;
+        state.currentUiGeneration += 1;
+        const currentRuntime = ensureStoreRuntime(getCurrentStoreKey());
+        state.currentToken = currentRuntime.token || "";
+        state.currentUniscid = currentRuntime.uniscid || "";
+        state.regionTree = currentRuntime.regionTree || {};
 
         state.loginPayload = state.storePayloads[state.currentStoreIndex]?.payload?.trim() || "";
         state.dingTalkWebhook = els.dingWebhookInput.value.trim();
@@ -1865,17 +2188,18 @@
         }
     }
 
-    async function fetchRegionData() {
-        if (!state.currentToken) return;
-        const res = await callApi('/salesuser/getTownList', 'GET');
+    async function fetchRegionData(storeKey = getCurrentStoreKey(), uiGeneration = state.currentUiGeneration) {
+        if (!ensureStoreRuntime(storeKey).token) return;
+        const res = await callApi('/salesuser/getTownList', 'GET', null, storeKey);
+        if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) return;
         if (res?.code === 0 && res.data) {
-            parseRegionData(res.data);
+            parseRegionData(res.data, storeKey);
             populateSelect(els.city, Object.keys(state.regionTree));
         }
     }
 
-    function parseRegionData(dataArray) {
-        state.regionTree = {};
+    function parseRegionData(dataArray, storeKey = getCurrentStoreKey()) {
+        const regionTree = {};
         try {
             dataArray.forEach(cityObj => {
                 Object.keys(cityObj).forEach(cityCode => {
@@ -1891,14 +2215,14 @@
                                 const { cityName, districtName } = towns[0];
                                 if (!cityName?.trim() || !districtName?.trim()) return;
 
-                                if (!state.regionTree[cityName]) state.regionTree[cityName] = {};
-                                if (!state.regionTree[cityName][districtName]) state.regionTree[cityName][districtName] = [];
+                                if (!regionTree[cityName]) regionTree[cityName] = {};
+                                if (!regionTree[cityName][districtName]) regionTree[cityName][districtName] = [];
 
                                 const validTowns = towns
                                     .filter(t => t.townName?.trim() && t.townCode?.trim())
                                     .map(t => ({ text: t.townName, value: t.townCode }));
 
-                                if (validTowns.length) state.regionTree[cityName][districtName] = validTowns;
+                                if (validTowns.length) regionTree[cityName][districtName] = validTowns;
                             }
                         });
                     });
@@ -1907,6 +2231,8 @@
         } catch (e) {
             console.error("地址解析错误", e);
         }
+        ensureStoreRuntime(storeKey).regionTree = regionTree;
+        state.regionTree = regionTree;
     }
 
     function getDefaultTradeMonth() {
@@ -1940,131 +2266,172 @@
         fetchOrders();
     }
 
+    function buildOrderQuery() {
+        const monthVal = document.getElementById('orderTradeMonth').value;
+        const tradeMonth = `${new Date().getFullYear()}-${monthVal}`;
+        const payState = document.getElementById('orderPayStateFilter').value;
+        const recordState = document.getElementById('orderRecordStateFilter').value;
+        const inputStr = document.getElementById('orderSearchMobile').value.trim();
+        const storeKey = getCurrentStoreKey();
+        const signature = JSON.stringify({ tradeMonth, payState, recordState, inputStr, storeKey, storeConfigRevision: state.storeConfigRevision });
+        const baseParams = { tradeMonth, inputStr };
+        if (recordState !== '') baseParams.recordState = recordState;
+        return { signature, baseParams, payState, groupStates: payStateGroups[payState] || null };
+    }
+
+    function createOrderPagingState(groupStates) {
+        const groups = {};
+        (groupStates || []).forEach(payState => {
+            groups[payState] = { page: 1, hasMore: true, fetched: 0, total: null, retryCount: 0, lastError: "" };
+        });
+        return { normal: { page: 1, hasMore: true, fetched: 0, total: null, retryCount: 0, lastError: "" }, groups };
+    }
+
+    async function mapWithConcurrency(items, limit, callback) {
+        const results = new Array(items.length);
+        let nextIndex = 0;
+        const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+            while (nextIndex < items.length) {
+                const itemIndex = nextIndex++;
+                results[itemIndex] = await callback(items[itemIndex], itemIndex);
+            }
+        });
+        await Promise.all(workers);
+        return results;
+    }
+
+    async function fetchStoreOrderPage(storeKey, paging, baseParams, payState) {
+        if (!paging.hasMore || paging.page > CONSTANTS.ORDER_QUERY_MAX_PAGES) {
+            return { orders: [], failed: !!paging.lastError, message: paging.lastError || '' };
+        }
+        const params = { ...baseParams, pageNumber: String(paging.page) };
+        if (payState !== undefined && payState !== null && payState !== '') params.payState = String(payState);
+        let res = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+            res = await callApi('/salesuser/getShopOrderList', 'GET', params, storeKey);
+            if (res?.code === 0 && Array.isArray(res.data)) break;
+            if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 250));
+        }
+        if (!(res?.code === 0 && Array.isArray(res.data))) {
+            paging.retryCount = 3;
+            paging.lastError = res?.msg || '请求失败';
+            paging.hasMore = false;
+            return { orders: [], failed: true, message: res?.msg || '请求失败' };
+        }
+
+        paging.retryCount = 0;
+        paging.lastError = "";
+        const pageOrders = res.data.map(order => attachOrderContext(order, storeKey));
+        paging.fetched += pageOrders.length;
+        paging.total = res.count != null ? Number(res.count) : paging.total;
+        paging.page += 1;
+        paging.hasMore = paging.page <= CONSTANTS.ORDER_QUERY_MAX_PAGES && (
+            paging.total != null ? paging.fetched < paging.total : pageOrders.length > 0
+        );
+        return { orders: pageOrders, failed: false };
+    }
+
+    function mergeOrderResults(existing, additions) {
+        const orderMap = new Map();
+        [...existing, ...additions].forEach(order => {
+            const key = getOrderContextKey(order.storeKey, order.ccbPayOrderNumber || order.storeOrderNumber);
+            if (!key || key.endsWith('|')) return;
+            const previous = orderMap.get(key);
+            orderMap.set(key, previous ? { ...previous, ...order } : order);
+        });
+        return Array.from(orderMap.values()).sort((a, b) => {
+            const timeDiff = new Date(b.createTime || 0).getTime() - new Date(a.createTime || 0).getTime();
+            if (timeDiff) return timeDiff;
+            const aKey = `${a.ccbPayOrderNumber || ''}|${a.storeOrderNumber || ''}|${a.storeKey || ''}`;
+            const bKey = `${b.ccbPayOrderNumber || ''}|${b.storeOrderNumber || ''}|${b.storeKey || ''}`;
+            return aKey.localeCompare(bKey);
+        });
+    }
+
     async function fetchOrders(page = 1) {
-        page = Number(page) || 1;
         const container = document.getElementById('orderListContainer');
-        if (!state.currentToken) {
-            container.innerHTML = '<div style="padding: 20px; text-align: center; color: red;">请先获取 Token</div>';
+        const isFirstPage = Number(page) <= 1;
+        const query = buildOrderQuery();
+        const queryGeneration = isFirstPage ? ++state.orderQueryGeneration : state.orderQueryGeneration;
+
+        if (!state.storePayloads.some(store => store.payload?.trim())) {
+            container.innerHTML = '<div style="padding: 20px; text-align: center; color: red;">请先配置至少一个门店</div>';
             return;
         }
 
-        const isFirstPage = page === 1;
-
         if (isFirstPage) {
-            addLog("刷新订单列表...", "info");
+            addLog(`刷新当前门店[${getStoreContext(getCurrentStoreKey()).storeName}]订单列表`, "info");
             container.innerHTML = '<div style="padding: 50px; text-align: center;"><mdui-circular-progress></mdui-circular-progress></div>';
             state.orderSearchResults = [];
+            state.orderContextByKey.clear();
             state.orderCurrentPage = 1;
             state.orderHasMore = false;
-            state.orderSubStates = null;
+            state.orderLoadingMore = false;
+            state.orderStorePaging = {};
+            state.orderQueryFailures = [];
+            state.orderQuerySignature = query.signature;
+        } else if (state.orderLoadingMore || state.orderQuerySignature !== query.signature) {
+            if (state.orderQuerySignature !== query.signature) fetchOrders(1);
+            return;
         } else {
             state.orderLoadingMore = true;
         }
 
-        const monthVal = document.getElementById('orderTradeMonth').value;
-        const tradeMonth = `${new Date().getFullYear()}-${monthVal}`;
-        const payStateVal = document.getElementById('orderPayStateFilter').value;
-        const recordStateVal = document.getElementById('orderRecordStateFilter').value;
-        const searchVal = document.getElementById('orderSearchMobile').value.trim();
-
-        const baseParams = { tradeMonth, inputStr: searchVal };
-        if (recordStateVal !== '') baseParams.recordState = recordStateVal;
-
-        const groupStates = payStateGroups[payStateVal];
-        const isGrouped = !!groupStates;
-
-        if (isGrouped) {
-            if (isFirstPage || !state.orderSubStates) {
-                state.orderSubStates = groupStates.map(s => ({ state: s, page: 1, hasMore: true, fetched: 0, total: null }));
-            }
-
-            const subStates = state.orderSubStates.filter(ss => ss.hasMore);
-            if (!subStates.length && !isFirstPage) {
-                state.orderHasMore = false;
-                state.orderLoadingMore = false;
-                setupOrderSentinel(false);
-                return;
-            }
-
-            const results = [];
-            for (let i = 0; i < subStates.length; i++) {
-                if (i > 0) await new Promise(r => setTimeout(r, 100));
-                const ss = subStates[i];
-                const params = { ...baseParams, payState: String(ss.state), pageNumber: String(ss.page) };
-                const res = await callApi('/salesuser/getShopOrderList', 'GET', params);
-                if (res?.code === 0 && Array.isArray(res.data)) {
-                    if (res.count != null) ss.total = Number(res.count);
-                    ss.fetched += res.data.length;
-                    ss.hasMore = ss.total != null ? ss.fetched < ss.total : res.data.length > 0;
-                    results.push(res.data);
-                } else {
-                    ss.hasMore = false;
-                    results.push([]);
+        const currentStoreKey = getCurrentStoreKey();
+        const storeKeys = getStoreByKey(currentStoreKey)?.payload?.trim() ? [currentStoreKey] : [];
+        const results = await mapWithConcurrency(storeKeys, 2, async storeKey => {
+            const storePaging = state.orderStorePaging[storeKey] || createOrderPagingState(query.groupStates);
+            state.orderStorePaging[storeKey] = storePaging;
+            if (query.groupStates) {
+                const groupedResults = [];
+                for (const payState of query.groupStates) {
+                    groupedResults.push(await fetchStoreOrderPage(storeKey, storePaging.groups[payState], query.baseParams, payState));
+                    await new Promise(resolve => setTimeout(resolve, 80));
                 }
+                return { storeKey, orders: groupedResults.flatMap(result => result.orders), failures: groupedResults.filter(result => result.failed) };
             }
-            const newOrders = results.flat();
+            const result = await fetchStoreOrderPage(storeKey, storePaging.normal, query.baseParams, query.payState);
+            return { storeKey, orders: result.orders, failures: result.failed ? [result] : [] };
+        });
 
-            if (!isFirstPage) {
-                state.orderSearchResults = [...state.orderSearchResults, ...newOrders];
-                subStates.forEach(ss => { ss.page++; });
-            } else {
-                state.orderSearchResults = newOrders;
-                subStates.forEach(ss => { ss.page = 2; });
-            }
-
-            state.orderHasMore = subStates.some(ss => ss.hasMore);
-            state.orderCurrentPage = page;
-
-            addLog(`获取到订单共 ${state.orderSearchResults.length} 条`, "info");
-            if (!state.orderSearchResults.length) {
-                container.innerHTML = '<div style="padding: 32px; text-align: center; color: #999;">未找到相关订单</div>';
-                state.orderHasMore = false;
-                if (!isFirstPage) state.orderLoadingMore = false;
-                return;
-            }
-
-            renderOrderList(container, state.orderSearchResults, state.orderHasMore);
-        } else {
-            const params = { ...baseParams, pageNumber: String(page) };
-            if (payStateVal !== '') params.payState = payStateVal;
-
-            const res = await callApi('/salesuser/getShopOrderList', 'GET', params);
-
-            if (res?.code === 0 && Array.isArray(res.data)) {
-                let orders = res.data;
-
-                if (!isFirstPage) {
-                    state.orderSearchResults = [...state.orderSearchResults, ...orders];
-                } else {
-                    state.orderSearchResults = orders;
-                }
-
-                const totalCount = res.count;
-                state.orderHasMore = totalCount != null
-                    ? state.orderSearchResults.length < Number(totalCount)
-                    : orders.length > 0;
-                state.orderCurrentPage = page;
-
-                addLog(`获取到订单共 ${state.orderSearchResults.length} 条`, "info");
-                if (!state.orderSearchResults.length) {
-                    container.innerHTML = '<div style="padding: 32px; text-align: center; color: #999;">未找到相关订单</div>';
-                    state.orderHasMore = false;
-                    if (!isFirstPage) state.orderLoadingMore = false;
-                    return;
-                }
-
-                renderOrderList(container, state.orderSearchResults, state.orderHasMore);
-            } else {
-                if (isFirstPage) {
-                    addLog(`加载订单失败: ${res?.msg}`, "error");
-                    container.innerHTML = `<div style="text-align: center; color: red;">加载失败: ${escapeHtml(res?.msg || '未知错误')}</div>`;
-                }
-                state.orderHasMore = false;
-            }
+        if (queryGeneration !== state.orderQueryGeneration || state.orderQuerySignature !== query.signature) {
+            if (!isFirstPage) state.orderLoadingMore = false;
+            return;
         }
 
-        if (!isFirstPage) {
-            state.orderLoadingMore = false;
+        const additions = results.flatMap(result => result.orders);
+        const failureMap = new Map(state.orderQueryFailures.map(item => [item.storeKey, item]));
+        results.forEach(result => {
+            if (result.failures.length) {
+                failureMap.set(result.storeKey, {
+                    storeKey: result.storeKey,
+                    storeName: getStoreContext(result.storeKey).storeName,
+                    message: result.failures.map(failure => failure.message).join('；')
+                });
+            } else {
+                failureMap.delete(result.storeKey);
+            }
+        });
+        state.orderQueryFailures = Array.from(failureMap.values());
+        state.orderSearchResults = mergeOrderResults(isFirstPage ? [] : state.orderSearchResults, additions);
+        state.orderCurrentPage = isFirstPage ? 1 : state.orderCurrentPage + 1;
+        state.orderHasMore = Object.values(state.orderStorePaging).some(storePaging => query.groupStates
+            ? Object.values(storePaging.groups).some(paging => paging.hasMore)
+            : storePaging.normal.hasMore
+        );
+        state.orderLoadingMore = false;
+
+        addLog(`当前门店订单列表已加载 ${state.orderSearchResults.length} 条`, "info");
+        if (!state.orderSearchResults.length) {
+            const failureText = state.orderQueryFailures.length
+                ? '订单加载失败，请重试'
+                : '未找到相关订单';
+            container.innerHTML = `<div style="padding: 32px; text-align: center; color: #999;">${escapeHtml(failureText)}</div>`;
+            return;
+        }
+        renderOrderList(container, state.orderSearchResults, state.orderHasMore);
+        if (state.orderQueryFailures.length) {
+            container.insertAdjacentHTML('afterbegin', '<div style="grid-column:1/-1;padding:8px 12px;color:rgb(var(--mdui-color-error));">订单加载失败，请重试</div>');
         }
     }
 
@@ -2076,7 +2443,7 @@
             let footerContent = '';
             if (order.payState === 0 || order.payState === 1) {
                 footerContent = `
-                    <mdui-button icon="qr_code_2" variant="tonal" class="open-qr-btn" data-order-number="${escapeHtml(order.ccbPayOrderNumber)}">
+                    <mdui-button icon="qr_code_2" variant="tonal" class="open-qr-btn" data-order-number="${escapeHtml(order.ccbPayOrderNumber)}" data-store-key="${escapeHtml(order.storeKey)}">
                         去支付
                     </mdui-button>
                     <span class="price-value">¥${escapeHtml(price)}</span>
@@ -2089,7 +2456,7 @@
             }
 
             return `
-            <div class="order-card" data-order-number="${escapeHtml(order.ccbPayOrderNumber)}">
+            <div class="order-card" data-order-number="${escapeHtml(order.ccbPayOrderNumber)}" data-store-key="${escapeHtml(order.storeKey)}">
                 <div class="card-header">
                     <div>
                         <div class="buyer-name">${escapeHtml(order.shopOrderNumber)}</div>
@@ -2097,7 +2464,7 @@
                     </div>
                     <div style="display:flex; align-items: center; gap:4px;">
                         <div class="status-badge status-${order.payState}">${escapeHtml(statusText)}</div>
-                        <mdui-button-icon icon="info" variant="standard" class="view-order-detail-btn" data-order-number="${escapeHtml(order.ccbPayOrderNumber)}"></mdui-button-icon>
+                            <mdui-button-icon icon="info" variant="standard" class="view-order-detail-btn" data-order-number="${escapeHtml(order.ccbPayOrderNumber)}" data-store-key="${escapeHtml(order.storeKey)}"></mdui-button-icon>
                     </div>
                 </div>
                 <div class="info-grid">
@@ -2180,10 +2547,10 @@
 
             await new Promise(r => setTimeout(r, 200));
 
-            const res = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber: order.ccbPayOrderNumber });
+            const res = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber: order.ccbPayOrderNumber }, order.storeKey);
 
             if (res?.code === 0 && res.data?.payOrder) {
-                const detail = res.data.payOrder;
+                const detail = attachOrderContext(res.data.payOrder, order.storeKey, order);
                 const product = detail.goodsOrderList?.[0] || {};
                 card.innerHTML = renderHuanxinCard(detail, product);
                 card.classList.add('order-card-huanxin', 'order-card-flip');
@@ -2236,8 +2603,13 @@
         `;
     }
 
-    async function viewOrderDetail(orderNumber) {
+    async function viewOrderDetail(orderNumber, storeKey = "") {
         if (!orderNumber) return showSnackbar({ message: "无效订单号" });
+
+        const context = findOrderContext(storeKey, orderNumber) || attachOrderContext({ ccbPayOrderNumber: orderNumber }, storeKey);
+        if (!context.storeKey) return showSnackbar({ message: "订单所属门店未知，无法操作" });
+        const requestGeneration = ++state.detailRequestGeneration;
+        const requestKey = getOrderContextKey(context.storeKey, orderNumber);
 
         const dialog = els.detailDialog;
         const detailPushBtn = document.getElementById('detailPushBtn');
@@ -2255,11 +2627,12 @@
 
         addActionButton(dialog, "关闭", () => dialog.open = false);
 
-        const res = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber });
+        const res = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber }, context.storeKey);
+        if (requestGeneration !== state.detailRequestGeneration || requestKey !== getOrderContextKey(context.storeKey, orderNumber)) return;
         loading.style.display = 'none';
 
         if (res?.code === 0 && res.data?.payOrder) {
-            renderOrderDetail(dialog, res.data.payOrder, detailPushBtn, res.data.refundOrderVos);
+            renderOrderDetail(dialog, attachOrderContext(res.data.payOrder, context.storeKey, context), detailPushBtn, res.data.refundOrderVos);
         } else {
             content.style.display = 'block';
             content.innerHTML = `<div style="text-align:center; color:red;">获取失败: ${escapeHtml(res?.msg)}</div>`;
@@ -2286,17 +2659,23 @@
             addActionButton(dialog, "取消订单", () => {
                 dialog.open = false;
                 setTimeout(() => {
-                    state.orderToCancel = order.shopOrderNumber;
+                    state.orderToCancel = {
+                        storeKey: order.storeKey,
+                        storeIndex: order.storeIndex,
+                        storeName: order.storeName,
+                        shopOrderNumber: order.shopOrderNumber,
+                        ccbPayOrderNumber: order.ccbPayOrderNumber
+                    };
                     els.confirmDialog.open = true;
                 }, 200);
             }, "rgb(var(--mdui-color-error))");
         }
 
         if (order.payState === 2) {
-            state.orderToPush = order;
+            state.orderToPush = attachOrderContext(order, order.storeKey);
             detailPushBtn.style.display = 'inline-flex';
 
-            const queuedData = findOrderInQueue(order.ccbPayOrderNumber);
+            const queuedData = findOrderInQueue(order.ccbPayOrderNumber, order.storeKey);
             if (queuedData && queuedData.item && queuedData.item.buyerMobile) {
                 detailPushBtn.innerText = "可补推送";
                 state.orderToPush._cachedMobile = queuedData.item.buyerMobile;
@@ -2310,7 +2689,13 @@
             addActionButton(dialog, "退款", () => {
                 dialog.open = false;
                 setTimeout(() => {
-                    state.orderToRefund = order.ccbPayOrderNumber;
+                    state.orderToRefund = {
+                        storeKey: order.storeKey,
+                        storeIndex: order.storeIndex,
+                        storeName: order.storeName,
+                        ccbPayOrderNumber: order.ccbPayOrderNumber,
+                        shopOrderNumber: order.shopOrderNumber
+                    };
                     els.refundDialog.open = true;
                 }, 200);
             }, "rgb(var(--mdui-color-error))");
@@ -2483,9 +2868,10 @@
 
     async function cancelOrder() {
         if (!state.orderToCancel) return;
+        const orderContext = state.orderToCancel;
         els.confirmDialog.open = false;
-        addLog(`请求取消订单: ${state.orderToCancel}`, "info");
-        const res = await callApi('/salesuser/cancelWxMiniOrder', 'POST', { shopOrderNumber: state.orderToCancel });
+        addLog(`请求取消门店[${orderContext.storeName}]订单`, "info");
+        const res = await callApi('/salesuser/cancelWxMiniOrder', 'POST', { shopOrderNumber: orderContext.shopOrderNumber }, orderContext.storeKey);
         if (res?.code === 0) {
             addLog("订单取消成功", "info");
             showSnackbar({ message: "订单取消成功！" });
@@ -2494,36 +2880,47 @@
             addLog(`订单取消失败: ${res?.msg}`, "error");
             showError(res?.msg || "取消失败");
         }
-        state.orderToCancel = "";
+        state.orderToCancel = null;
     }
 
     function closeConfirmDialog() {
         els.confirmDialog.open = false;
-        state.orderToCancel = "";
+        state.orderToCancel = null;
     }
 
     async function refundOrder() {
         if (!state.orderToRefund) return;
+        const orderContext = state.orderToRefund;
         els.refundDialog.open = false;
 
-        addLog(`请求发起退款: ${state.orderToRefund}`, "info");
+        addLog(`请求门店[${orderContext.storeName}]发起退款`, "info");
         const payload = {
             shopRefundOrderNumber: "",
-            ccbPayOrderNumber: state.orderToRefund,
+            ccbPayOrderNumber: orderContext.ccbPayOrderNumber,
             goodsList: []
         };
 
-        const res = await callApi('/salesuser/auditRefundOrder', 'POST', payload);
+        const res = await callApi('/salesuser/auditRefundOrder', 'POST', payload, orderContext.storeKey);
 
         if (res?.code === 0) {
             addLog("退款请求已接受", "info");
             showSnackbar({ message: "退款成功" });
 
-            const detailRes = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber: state.orderToRefund });
-            if (detailRes?.code === 0 && detailRes.data) {
+            const detailRes = await callApi('/salesuser/getSalesOrderDetail', 'GET', { orderNumber: orderContext.ccbPayOrderNumber }, orderContext.storeKey);
+            if (detailRes?.code === 0 && detailRes.data && Array.isArray(detailRes.data.refundOrderVos) && detailRes.data.refundOrderVos.length) {
                 addLog("获取退款详情成功，准备发起钉钉推送", "info");
+                detailRes.data.payOrder = attachOrderContext(detailRes.data.payOrder || {}, orderContext.storeKey, orderContext);
                 const msg = buildDingTalkRefundMessage(detailRes.data);
-                await sendDingTalkMessage(msg);
+                const pushResult = await sendDingTalkMessage(msg);
+                if (pushResult?.ok) {
+                    markOrderPushed(orderContext.storeKey, orderContext.ccbPayOrderNumber, "REFUND");
+                } else {
+                    queueRefundNotification(orderContext, Number(detailRes.data.payOrder?.payState ?? 5), pushResult?.message || "退款通知推送失败");
+                    showSnackbar({ message: "退款成功，通知失败，已进入后台重试" });
+                }
+            } else {
+                queueRefundNotification(orderContext, 5, "退款详情尚未就绪");
+                showSnackbar({ message: "退款成功，通知将在后台补发" });
             }
 
             fetchOrders();
@@ -2531,12 +2928,28 @@
             addLog(`退款请求失败: ${res?.msg}`, "error");
             showError(res?.msg || "退款请求失败");
         }
-        state.orderToRefund = "";
+        state.orderToRefund = null;
+    }
+
+    function queueRefundNotification(orderContext, lastState, lastError) {
+        enqueueOrder(orderContext.storeKey, orderContext.ccbPayOrderNumber, {
+            ...orderContext,
+            storeNameSnapshot: orderContext.storeName,
+            lastState,
+            lastCheckAt: Date.now(),
+            queryRetryCount: 0,
+            queryLastError: "",
+            pendingNotification: "REFUND",
+            notificationRetryCount: 1,
+            notificationLastError: lastError,
+            notificationLastAttemptAt: Date.now()
+        });
+        startPolling();
     }
 
     function closeRefundDialog() {
         els.refundDialog.open = false;
-        state.orderToRefund = "";
+        state.orderToRefund = null;
     }
 
     function openDetailPushDialog() {
@@ -2555,6 +2968,7 @@
     }
 
     async function confirmPush() {
+        if (state.isManualPushInProgress) return;
         const pushMobile = els.pushMobileInput.value.trim();
 
         if (!state.orderToPush) return;
@@ -2568,20 +2982,36 @@
             return showSnackbar({ message: "请输入正确的手机号" });
         }
 
-        addLog(`手动补发推送: ${state.orderToPush.shopOrderNumber} -> ${pushMobile}`, "info");
-        const msg = buildDingTalkOrderMessage(state.orderToPush, pushMobile);
-        await sendDingTalkMessage(msg);
-        showSnackbar({ message: "推送请求已发送" });
-
-        const storeKey = state.orderToPush._storeKey || getCurrentStoreKey();
+        const storeKey = state.orderToPush.storeKey || state.orderToPush._storeKey;
         const orderNumber = state.orderToPush.ccbPayOrderNumber;
-        if (orderNumber) {
-            dequeueOrder(storeKey, orderNumber);
-            markOrderPushed(storeKey, orderNumber, "PAID");
-            addLog(`已将订单[${orderNumber}]从本地轮询队列中移除`, "info");
+        if (orderNumber && isOrderPushed(storeKey, orderNumber, "PAID")) {
+            return showSnackbar({ message: "该订单已推送，请勿重复推送" });
         }
 
-        closePushDialog();
+        state.isManualPushInProgress = true;
+        const confirmPushButton = document.getElementById('confirmPushBtn');
+        confirmPushButton.disabled = true;
+        addLog(`手动补发门店[${state.orderToPush.storeName}]订单推送`, "info");
+        try {
+            const msg = buildDingTalkOrderMessage(state.orderToPush, pushMobile);
+            const pushResult = await sendDingTalkMessage(msg);
+            if (!pushResult?.ok) {
+                showSnackbar({ message: "推送失败，订单仍保留在队列中" });
+                return;
+            }
+            showSnackbar({ message: "推送成功" });
+
+            if (orderNumber) {
+                dequeueOrder(storeKey, orderNumber);
+                markOrderPushed(storeKey, orderNumber, "PAID");
+                addLog(`已将订单[${orderNumber}]从本地轮询队列中移除`, "info");
+            }
+
+            closePushDialog();
+        } finally {
+            state.isManualPushInProgress = false;
+            confirmPushButton.disabled = false;
+        }
     }
 
     function closePushDialog() {
@@ -2590,26 +3020,34 @@
         state.orderToPush = null;
     }
 
-    function openQrDialog(ccbOrderNum) {
-        if (!ccbOrderNum) return showSnackbar({ message: "无效的订单号" });
-        state.currentQrOrderNumber = ccbOrderNum;
+    function openQrDialog(orderContext) {
+        if (!orderContext?.ccbPayOrderNumber || !orderContext?.storeKey) return showSnackbar({ message: "无效的订单上下文" });
+        state.currentQrOrderContext = { ...orderContext };
+        state.qrRequestGeneration += 1;
         els.qrDialog.open = true;
         loadQrCode();
     }
 
     function refreshQrCode() {
-        if (state.currentQrOrderNumber) loadQrCode();
+        if (state.currentQrOrderContext) loadQrCode();
     }
 
     async function loadQrCode() {
+        const requestGeneration = ++state.qrRequestGeneration;
         els.qrLoading.style.display = 'block';
         els.qrImage.style.display = 'none';
         els.qrImage.src = '';
 
-        addLog(`正在获取订单[${state.currentQrOrderNumber}]的支付二维码...`, "info");
+        const orderContext = state.currentQrOrderContext;
+        if (!orderContext) return;
+        const requestKey = getOrderContextKey(orderContext.storeKey, orderContext.ccbPayOrderNumber);
+        addLog(`正在获取门店[${orderContext.storeName}]订单支付二维码`, "info");
         const res = await callApi('/salesuser/getCcbTogetherPayQrCd', 'POST', {
-            ccbPayOrderNumber: state.currentQrOrderNumber
-        });
+            ccbPayOrderNumber: orderContext.ccbPayOrderNumber
+        }, orderContext.storeKey);
+
+        const currentContext = state.currentQrOrderContext;
+        if (requestGeneration !== state.qrRequestGeneration || !currentContext || requestKey !== getOrderContextKey(currentContext.storeKey, currentContext.ccbPayOrderNumber)) return;
 
         els.qrLoading.style.display = 'none';
 
@@ -2661,6 +3099,8 @@
     async function checkQualification() {
         const mobileField = document.getElementById('buyerMobile');
         const mobile = mobileField.value;
+        const storeKey = getCurrentStoreKey();
+        const uiGeneration = state.currentUiGeneration;
         mobileField.setCustomValidity('');
         if (!mobile) {
             mobileField.setCustomValidity('请输入手机号');
@@ -2674,7 +3114,8 @@
         }
 
         addLog(`校验买家资格: ${mobile}`, "info");
-        const res = await callApi('/salesuser/queryCustomerChannelSubsidyBalance', 'GET', { buyerMobile: mobile });
+        const res = await callApi('/salesuser/queryCustomerChannelSubsidyBalance', 'GET', { buyerMobile: mobile }, storeKey);
+        if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey() || mobileField.value !== mobile) return;
         const chips = document.querySelectorAll('#productCategoryChips mdui-chip');
 
         chips.forEach(c => {
@@ -2745,6 +3186,8 @@
     function startRemindPolling() {
         if (state.isRemindPolling) return;
         const mobile = document.getElementById('buyerMobile').value.trim();
+        const storeKey = getCurrentStoreKey();
+        const uiGeneration = state.currentUiGeneration;
         if (!mobile || !state.currentToken) return;
 
         state.isRemindPolling = true;
@@ -2760,9 +3203,14 @@
                 showRemindBtn(false);
                 return;
             }
+            if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) {
+                stopRemindPolling();
+                return;
+            }
 
             addLog(`轮询资格核验: ${mobile}`, "info");
-            const res = await callApi('/salesuser/queryCustomerChannelSubsidyBalance', 'GET', { buyerMobile: mobile });
+            const res = await callApi('/salesuser/queryCustomerChannelSubsidyBalance', 'GET', { buyerMobile: mobile }, storeKey);
+            if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) return;
 
             if (res?.code === 0) {
                 const validCodes = (res.data.countrySubsidyCateCodes || "").split(',').map(c => c.trim()).filter(c => c);
@@ -2824,10 +3272,14 @@
             return;
         }
 
+        const storeKey = getCurrentStoreKey();
+        const uiGeneration = state.currentUiGeneration;
         addLog(`查询商品信息: ${code}`, "info");
-        _pendingGoodsQuery = callApi('/salesuser/queryGoodsInfo', 'GET', { goodsCode: code, uniscid: "" });
+        const pendingQuery = callApi('/salesuser/queryGoodsInfo', 'GET', { goodsCode: code, uniscid: "" }, storeKey);
+        _pendingGoodsQuery = pendingQuery;
         try {
-            const res = await _pendingGoodsQuery;
+            const res = await pendingQuery;
+            if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey() || document.querySelector('#goodsCode').value !== code) return;
             if (res?.code === 0 && res.data) {
                 if (res.data.id == null) {
                     addLog(`商品[${code}]未备案或已吊销`, "error");
@@ -2859,7 +3311,7 @@
                 renderRecentGoodsSelect("");
             }
         } finally {
-            _pendingGoodsQuery = null;
+            if (_pendingGoodsQuery === pendingQuery) _pendingGoodsQuery = null;
         }
     }
 
@@ -2920,26 +3372,75 @@
 
     async function generateNextOrderNumber() {
         const tradeMonth = getDefaultTradeMonth();
-        const res = await callApi('/salesuser/getShopOrderList', 'GET', {
-            tradeMonth: tradeMonth, inputStr: "", pageNumber: "1"
+        const storeKeys = state.storePayloads
+            .map((store, index) => getStoreKey(store, index))
+            .filter(storeKey => !!getStoreByKey(storeKey)?.payload?.trim());
+        const storeResults = await mapWithConcurrency(storeKeys, 2, async storeKey => {
+            const orders = [];
+            let pageNumber = 1;
+            let total = null;
+            while (pageNumber <= CONSTANTS.ORDER_QUERY_MAX_PAGES) {
+                const res = await callApi('/salesuser/getShopOrderList', 'GET', {
+                    tradeMonth,
+                    inputStr: "",
+                    pageNumber: String(pageNumber)
+                }, storeKey);
+                if (!(res?.code === 0 && Array.isArray(res.data))) {
+                    throw new Error(`门店[${getStoreContext(storeKey).storeName}]订单单号查询失败`);
+                }
+                orders.push(...res.data);
+                total = res.count != null ? Number(res.count) : total;
+                if (!res.data.length || (total != null && orders.length >= total)) break;
+                pageNumber += 1;
+                await new Promise(resolve => setTimeout(resolve, 80));
+            }
+            if (pageNumber > CONSTANTS.ORDER_QUERY_MAX_PAGES) {
+                throw new Error(`门店[${getStoreContext(storeKey).storeName}]订单分页超过安全上限`);
+            }
+            return orders;
         });
-        if (res?.code === 0 && Array.isArray(res.data) && res.data.length > 0) {
-            const num = parseInt(res.data[0].shopOrderNumber, 10);
-            return Number.isNaN(num) ? "1" : (num + 1).toString();
+
+        const patterns = storeResults.flat().map(order => String(order?.shopOrderNumber || '').trim())
+            .map(value => {
+                const match = value.match(/^(.*?)(\d+)$/);
+                return match ? { value, prefix: match[1], digits: match[2], number: Number(match[2]) } : null;
+            })
+            .filter(item => item && Number.isSafeInteger(item.number));
+        if (!patterns.length) return "1";
+
+        const prefixes = new Set(patterns.map(item => item.prefix));
+        if (prefixes.size !== 1) {
+            throw new Error("历史销售单号存在多个前缀格式，请改用手动单号");
         }
-        return "1";
+        const maxItem = patterns.reduce((max, item) => item.number > max.number ? item : max);
+        const nextDigits = String(maxItem.number + 1).padStart(maxItem.digits.length, '0');
+        const nextNumber = `${maxItem.prefix}${nextDigits}`;
+        addLog(`全门店销售单号最大值为 ${maxItem.value}，下一单号为 ${nextNumber}`, "info");
+        return nextNumber;
     }
 
     async function submitOrder() {
+        if (state.isSubmittingOrder) return showSnackbar({ message: "订单正在提交，请勿重复点击" });
+        state.isSubmittingOrder = true;
+        const submitButton = document.getElementById('submitOrderBtn');
+        submitButton.disabled = true;
+        const submitStoreKey = getCurrentStoreKey();
+        const submitStoreContext = getStoreContext(submitStoreKey);
+        const submitUiGeneration = state.currentUiGeneration;
+        try {
         if ("Notification" in window && Notification.permission !== "granted" && Notification.permission !== "denied") {
             Notification.requestPermission();
         }
 
-        if (!state.currentToken) return showError("Token 未就绪");
+        if (!await getTokenForStoreKey(submitStoreKey)) return showError("Token 未就绪");
 
         if (_pendingGoodsQuery) {
             addLog("等待商品信息查询完成...", "info");
             try { await _pendingGoodsQuery; } catch (_) { /* 查询异常已在 queryGoodsInfo 中处理 */ }
+        }
+
+        if (submitUiGeneration !== state.currentUiGeneration || submitStoreKey !== getCurrentStoreKey()) {
+            return showError("提交期间门店已切换，本次提交已取消");
         }
 
         addLog("开始收集表单并提交订单...", "info");
@@ -2967,6 +3468,10 @@
             } catch (e) {
                 return showError("自动获取单号失败");
             }
+        }
+
+        if (submitUiGeneration !== state.currentUiGeneration || submitStoreKey !== getCurrentStoreKey()) {
+            return showError("提交期间门店已切换，本次提交已取消");
         }
 
         let townName = "";
@@ -3003,15 +3508,28 @@
         };
 
         addLog(`订单详情: [${shopOrderNum}] 实付:${actual} 买家:${mobile} 地址:${addressStr.slice(0, 10)}...`, "info");
-        const res = await callApi('/salesuser/addOrder', 'POST', payload);
+        let res = await callApi('/salesuser/addOrder', 'POST', payload, submitStoreKey);
+        const conflictMessage = String(res?.msg || '');
+        if (res?.code !== 0 && document.querySelector('#autoOrderNumCheckbox').checked && /已存在|重复|占用|duplicate/i.test(conflictMessage)) {
+            addLog("销售单号冲突，重新查询后重试一次", "warn");
+            payload.shopOrderNumber = await generateNextOrderNumber();
+            res = await callApi('/salesuser/addOrder', 'POST', payload, submitStoreKey);
+        }
         if (res?.code === 0) {
             addLog(`下单成功: 建行单号为 ${res.data}`, "info");
             showSnackbar({ message: "订单提交成功！" });
             if (res.data) {
-                openQrDialog(res.data);
+                const orderContext = {
+                    ...submitStoreContext,
+                    ccbPayOrderNumber: res.data,
+                    shopOrderNumber: payload.shopOrderNumber,
+                    storeOrderNumber: payload.shopOrderNumber
+                };
+                openQrDialog(orderContext);
 
-                const storeKey = getCurrentStoreKey();
-                enqueueOrder(storeKey, res.data, {
+                enqueueOrder(submitStoreKey, res.data, {
+                    ...submitStoreContext,
+                    storeNameSnapshot: submitStoreContext.storeName,
                     lastState: 0,
                     buyerMobile: mobile,
                     createdAt: Date.now(),
@@ -3024,6 +3542,13 @@
         } else {
             addLog(`提交订单失败: ${res?.msg}`, "error");
             showError(res?.msg || "提交失败");
+        }
+        } catch (error) {
+            addLog(`提交订单失败: ${error.message}`, "error");
+            showError(error.message || "提交失败");
+        } finally {
+            state.isSubmittingOrder = false;
+            submitButton.disabled = false;
         }
     }
 
@@ -3382,7 +3907,7 @@
         }
     }
 
-    async function fetchPassGoodsList(uniscid, onProgress) {
+    async function fetchPassGoodsList(uniscid, storeKey, onProgress) {
         if (!uniscid) {
             addLog('fetchPassGoodsList: uniscid 为空', 'warn');
             return null;
@@ -3395,7 +3920,7 @@
             uniscid,
             pageSize: 1,
             pageNum: 1
-        });
+        }, storeKey);
 
         if (!countRes || countRes.code !== 0) {
             addLog(`查询商品总数失败: ${countRes?.msg || '未知错误'}`, 'error');
@@ -3415,7 +3940,7 @@
             uniscid,
             pageSize: totalCount,
             pageNum: 1
-        });
+        }, storeKey);
 
         if (!dataRes || dataRes.code !== 0) {
             addLog(`拉取商品库失败: ${dataRes?.msg || '未知错误'}`, 'error');
@@ -3440,6 +3965,7 @@
         let currentItems = [];
         let libsLoaded = false;
         let currentFileName = "";
+        let loadedContextKey = "";
         let dataLoaded = false;
         let poolDownloaded = false;
 
@@ -3681,12 +4207,15 @@
             $('productSearchDialog').open = true;
             try { await ensureLibs(); } catch (e) { addLog('依赖库加载失败: ' + e.message, 'error'); }
 
-            if (dataLoaded && sheetNames.length > 0) {
+            const storeKey = getCurrentStoreKey();
+            const uiGeneration = state.currentUiGeneration;
+            const uniscid = state.currentUniscid;
+            const contextKey = `${storeKey}|${uniscid}`;
+            if (dataLoaded && sheetNames.length > 0 && loadedContextKey === contextKey) {
                 showParsed(currentFileName);
                 return;
             }
 
-            const uniscid = state.currentUniscid;
             if (!uniscid) {
                 $('psResultsList').innerHTML = '<div style="padding:40px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="info" style="font-size:36px;opacity:0.3;display:block;margin:0 auto 6px;"></mdui-icon>未获取到 uniscid，请先登录</div>';
                 $('psSearchBar').style.display = 'none';
@@ -3701,6 +4230,7 @@
             $('psBottomBar').style.display = 'none';
 
             const cached = await loadPassGoodsCache(uniscid);
+            if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) return;
             if (cached && cached.data && cached.data.length > 0) {
                 const age = Date.now() - (cached.timestamp || 0);
                 const hours = Math.floor(age / 3600000);
@@ -3709,35 +4239,41 @@
                 } else {
                     addLog(`使用缓存商品库: ${cached.data.length} 条 (${hours}小时前更新)`, 'info');
                     localStorage.setItem(CONSTANTS.PASS_GOODS_COUNT_KEY, String(cached.data.length));
-                    loadApiDataIntoSearch(cached.data, uniscid);
+                    loadApiDataIntoSearch(cached.data, uniscid, contextKey);
                     return;
                 }
             }
 
-            const result = await fetchPassGoodsList(uniscid, (msg) => {
+            const result = await fetchPassGoodsList(uniscid, storeKey, (msg) => {
+                if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) return;
                 $('psResultsList').innerHTML = '<div class="ps-loading-box"><mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>' + escapeHtml(msg) + '</span></div>';
             });
+            if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) return;
 
             if (result && result.data && result.data.length > 0) {
                 localStorage.setItem(CONSTANTS.PASS_GOODS_COUNT_KEY, String(result.data.length));
-                loadApiDataIntoSearch(result.data, uniscid);
+                loadApiDataIntoSearch(result.data, uniscid, contextKey);
             } else {
                 $('psResultsList').innerHTML = '<div style="padding:40px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="inventory_2" style="font-size:36px;opacity:0.3;display:block;margin:0 auto 6px;"></mdui-icon>商品库为空或拉取失败</div>';
             }
         }
 
-        function loadApiDataIntoSearch(items, displayName) {
+        function loadApiDataIntoSearch(items, displayName, contextKey) {
             const sheetName = '商品库';
             allSheetData = { [sheetName]: items };
             allSheetHeaders = { [sheetName]: Object.keys(items[0] || {}) };
             sheetNames = [sheetName];
             currentFileName = displayName || '商品库';
+            loadedContextKey = contextKey || "";
             poolDownloaded = true;
             showParsed(displayName || '商品库');
         }
 
         async function refreshGoodsPool() {
+            const storeKey = getCurrentStoreKey();
+            const uiGeneration = state.currentUiGeneration;
             const uniscid = state.currentUniscid;
+            const contextKey = `${storeKey}|${uniscid}`;
             if (!uniscid) {
                 return showSnackbar({ message: '未获取到 uniscid，请先登录' });
             }
@@ -3761,14 +4297,16 @@
             $('psBottomBar').style.display = 'none';
             $('psResultsList').style.display = '';
 
-            const result = await fetchPassGoodsList(uniscid, (msg) => {
+            const result = await fetchPassGoodsList(uniscid, storeKey, (msg) => {
+                if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) return;
                 $('psResultsList').innerHTML = '<div class="ps-loading-box"><mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>' + escapeHtml(msg) + '</span></div>';
             });
+            if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) return;
 
             if (result && result.data && result.data.length > 0) {
                 const newCount = result.data.length;
                 localStorage.setItem(CONSTANTS.PASS_GOODS_COUNT_KEY, String(newCount));
-                loadApiDataIntoSearch(result.data, uniscid);
+                loadApiDataIntoSearch(result.data, uniscid, contextKey);
                 if (lastCount > 0 && newCount > lastCount) {
                     const added = newCount - lastCount;
                     addLog(`商品库更新: ${lastCount} -> ${newCount} (+${added})`, 'info');
@@ -3792,6 +4330,7 @@
             fuseInstance = null;
             currentSheet = '';
             currentFileName = '';
+            loadedContextKey = '';
         }
 
         function init() {
@@ -3930,7 +4469,7 @@
             const radio = e.target.closest('mdui-radio');
             if (radio && radio.value !== undefined) {
                 const index = parseInt(radio.value, 10);
-                setCurrentStoreIndex(index, true);
+                setConfigDraftCurrentIndex(index);
             }
         });
 
@@ -3980,14 +4519,16 @@
             if (openQrBtn) {
                 e.stopPropagation();
                 const orderNumber = openQrBtn.dataset.orderNumber;
-                openQrDialog(orderNumber);
+                const storeKey = openQrBtn.dataset.storeKey || orderCard?.dataset.storeKey || "";
+                openQrDialog(findOrderContext(storeKey, orderNumber));
             } else if (viewDetailBtn) {
                 e.stopPropagation();
                 const orderNumber = viewDetailBtn.dataset.orderNumber;
-                viewOrderDetail(orderNumber);
+                const storeKey = viewDetailBtn.dataset.storeKey || orderCard?.dataset.storeKey || "";
+                viewOrderDetail(orderNumber, storeKey);
             } else if (orderCard) {
                 const orderNumber = orderCard.dataset.orderNumber;
-                viewOrderDetail(orderNumber);
+                viewOrderDetail(orderNumber, orderCard.dataset.storeKey || "");
             }
         });
 

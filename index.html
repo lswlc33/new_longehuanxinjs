@@ -157,10 +157,10 @@
                 style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
                 钉钉推送配置
             </div>
-            <mdui-text-field id="configDingWebhook" label="钉钉 Webhook" variant="outlined" clearable
+            <mdui-text-field id="configDingWebhook" label="钉钉 Webhook" type="password" toggle-password variant="outlined" clearable
                 style="margin-bottom: 16px;"></mdui-text-field>
             <mdui-text-field id="configDingSecret" label="钉钉加签密钥 (Token/Secret)" variant="outlined"
-                clearable></mdui-text-field>
+                type="password" toggle-password clearable></mdui-text-field>
             <div style="margin-top: 12px; text-align: right;">
                 <mdui-button id="testDingTalkBtn" variant="tonal" icon="send">测试钉钉消息</mdui-button>
             </div>
@@ -182,9 +182,9 @@
                 style="font-size: 14px; color: rgb(var(--mdui-color-primary)); margin: 20px 0 8px 0; font-weight: bold;">
                 备份与还原
             </div>
-            <p style="margin-bottom: 12px; font-size: 12px; opacity: 0.6;">导出配置为文本以便备份或在其他设备导入。</p>
+            <p style="margin-bottom: 12px; font-size: 12px; opacity: 0.6;">默认仅导出脱敏配置，不包含 Payload、Webhook、Secret 或 AI Key；敏感值需在目标设备重新填写。</p>
             <div class="backup-btns">
-                <mdui-button id="exportConfigBtn" variant="tonal" icon="file_download">导出配置</mdui-button>
+                <mdui-button id="exportConfigBtn" variant="tonal" icon="file_download">导出脱敏配置</mdui-button>
                 <mdui-button id="importConfigBtn" variant="tonal" icon="file_upload">导入配置</mdui-button>
             </div>
         </div>
@@ -282,15 +282,15 @@
                         <mdui-chip variant="filter" selectable value="A06">热水器</mdui-chip>
                         <mdui-chip variant="filter" selectable value="B01">手机</mdui-chip>
                         <mdui-chip variant="filter" selectable value="B02">平板</mdui-chip>
-                        <mdui-chip variant="filter" selectable value="B03">手表手环</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="B03">智能表环</mdui-chip>
                         <mdui-chip variant="filter" selectable value="B04">智能眼镜</mdui-chip>
                         <mdui-chip variant="filter" selectable value="JS001">干衣机</mdui-chip>
                         <mdui-chip variant="filter" selectable value="JS002">洗碗机</mdui-chip>
-                        <mdui-chip variant="filter" selectable value="JS003">烟机</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="JS003">吸油烟机</mdui-chip>
                         <mdui-chip variant="filter" selectable value="JS004">燃气灶</mdui-chip>
                         <mdui-chip variant="filter" selectable value="JS005">净水器</mdui-chip>
                         <mdui-chip variant="filter" selectable value="JS006">智能马桶</mdui-chip>
-                        <mdui-chip variant="filter" selectable value="JS007">扫地机器</mdui-chip>
+                        <mdui-chip variant="filter" selectable value="JS007">扫地机</mdui-chip>
                         <mdui-chip variant="filter" selectable value="JS008">数码相机</mdui-chip>
                         <mdui-chip variant="filter" selectable value="JS010">电动轮椅</mdui-chip>
                     </div>
