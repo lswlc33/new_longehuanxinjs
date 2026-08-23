@@ -6,6 +6,10 @@
     --app-ease: cubic-bezier(0.2, 0, 0, 1);
 }
 
+/* mdui 的主题类挂在 html 上，选择器权重要压过它，否则 html 与 body 背景不一致 */
+html.mdui-theme-auto,
+html.mdui-theme-light,
+html.mdui-theme-dark,
 html,
 body {
     background-color: rgb(var(--mdui-color-surface));
@@ -81,7 +85,9 @@ body {
     align-items: center;
     gap: 12px;
     flex-grow: 1;
-    overflow: hidden;
+    /* 定位下拉菜单用；不能设 overflow:hidden，否则菜单会被裁掉（省略号由 .shop-name 自己负责） */
+    position: relative;
+    min-width: 0;
 }
 
 .shop-name {
@@ -128,28 +134,35 @@ body {
     gap: 16px;
 }
 
-@media (min-width: 768px) {
+/* 每列内部固定竖排，单栏与双栏共用 */
+.container-col {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* 960px 以下保持单栏：768px 时每列仅 360px，姓名等字段会被压到 123px */
+@media (min-width: 960px) {
     .container {
         max-width: 1100px;
     }
+
     .container-columns {
         flex-direction: row;
         align-items: flex-start;
     }
-    .container-col {
-        flex: 1;
-        min-width: 0;
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
-    }
-}
 
-@media (max-width: 767px) {
     .container-col {
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
+        min-width: 0;
+    }
+
+    /* 左列卡片更多、整体更高，给它多一点宽度以压缩两列高度差 */
+    .container-col-left {
+        flex: 1.12;
+    }
+
+    .container-col-right {
+        flex: 0.88;
     }
 }
 
@@ -200,17 +213,22 @@ body {
     }
 }
 
+/* 表单值被程序改动时闪一下：用错误色做两次快速呼吸，类似按下时的 state layer */
 @keyframes fieldFlash {
     0% {
-        box-shadow: 0 0 0 0 rgba(var(--mdui-color-primary), 0.3);
+        background-color: rgba(var(--mdui-color-error), 0.26);
     }
 
-    35% {
-        box-shadow: 0 0 0 4px rgba(var(--mdui-color-primary), 0.16);
+    25% {
+        background-color: rgba(var(--mdui-color-error), 0.04);
+    }
+
+    50% {
+        background-color: rgba(var(--mdui-color-error), 0.26);
     }
 
     100% {
-        box-shadow: 0 0 0 0 rgba(var(--mdui-color-primary), 0);
+        background-color: rgba(var(--mdui-color-error), 0);
     }
 }
 
@@ -224,7 +242,14 @@ body {
 }
 
 .field-flash {
-    animation: fieldFlash 0.55s ease-out;
+    animation: fieldFlash 0.6s ease-out;
+    border-radius: 12px;
+}
+
+/* 门店单价高于备案价：红框标注（红字提示由 mdui 的校验信息负责，避免重复） */
+.field-over-limit::part(container) {
+    outline: 2px solid rgb(var(--mdui-color-error));
+    outline-offset: -2px;
     border-radius: 12px;
 }
 
@@ -298,6 +323,20 @@ mdui-select {
     min-height: 56px;
 }
 
+/*
+ * mdui 的下拉面板是 position: fixed 且不限高的：乡镇/街道等选项很多时，
+ * 菜单会长到视口以外，而页面滚动不会带动 fixed 面板，导致后面的选项永远点不到。
+ * 这里给菜单本体限高并开启内部滚动；40vh 也让 mdui 的自动定位总能在字段上/下放得下。
+ */
+mdui-select::part(menu) {
+    max-height: min(40vh, 20rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    /* 滚动条样式无法从外层继承进 shadow DOM，这里在 part 上单独声明 */
+    scrollbar-width: thin;
+}
+
 .chip-container {
     display: flex;
     gap: 8px;
@@ -320,8 +359,8 @@ mdui-select {
 .chip-expand-toggle {
     display: flex;
     justify-content: center;
-    margin-top: -12px;
-    margin-bottom: -8px;
+    margin-top: -4px;
+    margin-bottom: -6px;
 }
 
 .chip-container mdui-chip {
@@ -338,6 +377,16 @@ mdui-select {
     --mdui-color-secondary-container: rgb(var(--mdui-color-primary));
     --mdui-color-on-secondary-container: rgb(var(--mdui-color-on-primary));
     font-weight: bold;
+}
+
+.switch-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    font-size: 14px;
+    color: rgb(var(--mdui-color-on-surface));
 }
 
 .btn-small {
@@ -465,15 +514,29 @@ mdui-select {
     color: rgb(var(--mdui-color-outline));
 }
 
+/*
+ * 层级约定（从低到高）：
+ * 1000 状态栏 / 1400 门店切换菜单 / 2000 调试日志面板
+ * 2200 抽屉 / 2300 弹窗 / 2400 snackbar / 2500 提交与暂存 FAB
+ * snackbar 要盖住弹窗才能看见反馈，FAB 又要盖住 snackbar 才不挡操作
+ */
 .fab-stack {
     position: fixed;
     right: 24px;
     bottom: 24px;
-    z-index: 1001;
+    z-index: 2500;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
     gap: 10px;
+    transition: opacity 0.2s ease;
+}
+
+/* 模态弹窗/抽屉打开时，FAB 不应浮在遮罩之上 */
+body:has(mdui-dialog[open]) .fab-stack,
+body:has(mdui-navigation-drawer[open]) .fab-stack {
+    opacity: 0;
+    pointer-events: none;
 }
 
 .fab-draft {
@@ -481,10 +544,17 @@ mdui-select {
 }
 
 mdui-snackbar {
-    --z-index: 1000;
+    --z-index: 2400;
 }
 
-/* 弹窗面板在窄屏下默认只有 280px，内容易被横向裁切 */
+/* 窄屏下 snackbar 会占满整行，把它抬到 FAB 上方，两者互不遮挡 */
+@media (max-width: 600px) {
+    mdui-snackbar {
+        margin-bottom: 112px;
+    }
+}
+
+/* 弹窗面板在窄屏下默认只有 280px，内容容易被横向裁切 */
 mdui-dialog::part(panel) {
     width: 100%;
     max-width: 560px;
@@ -502,34 +572,32 @@ mdui-dialog div[slot="description"] {
     width: 100%;
 }
 
-#orderDrawer {
+/* mdui 把抽屉内容渲染在 shadow 的 panel 里，宿主上写宽度无效，必须用 ::part */
+#orderDrawer::part(panel) {
     width: 100vw;
     max-width: 100vw;
-    height: 100vh;
-    overflow: hidden;
 }
 
+/* 抽屉内层次与表单一致：外层用 surface，卡片用 surface-container-highest */
 .drawer-content {
     height: 100%;
     display: flex;
     flex-direction: column;
-    background-color: rgb(var(--mdui-color-surface-container-low));
+    background-color: rgb(var(--mdui-color-surface));
 }
 
 .drawer-header,
 .drawer-search,
 .drawer-filter {
     background-color: rgb(var(--mdui-color-surface));
-    padding: 0 24px;
 }
 
 .drawer-header {
-    padding-top: 10px;
-    padding-bottom: 10px;
+    padding: 10px 16px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    border-bottom: 1px solid rgba(var(--mdui-color-outline), 0.24);
 }
 
 .drawer-header-btns {
@@ -540,7 +608,7 @@ mdui-dialog div[slot="description"] {
 .header-action-btn {
     height: 30px;
     padding: 0 12px;
-    border: 1px solid rgba(0, 0, 0, 0.12);
+    border: 1px solid rgba(var(--mdui-color-outline), 0.38);
     border-radius: 8px;
     background: transparent;
     color: rgb(var(--mdui-color-on-surface));
@@ -553,7 +621,7 @@ mdui-dialog div[slot="description"] {
 }
 
 .header-action-btn:hover {
-    background: rgba(0, 0, 0, 0.04);
+    background: rgba(var(--mdui-color-on-surface), 0.06);
 }
 
 .header-action-btn:active {
@@ -576,14 +644,13 @@ mdui-dialog div[slot="description"] {
 
 .drawer-search {
     padding: 8px 16px;
-    background-color: rgb(var(--mdui-color-surface));
 }
 
 .search-input-wrap {
     display: flex;
     align-items: center;
     gap: 0;
-    border: 1px solid rgba(0, 0, 0, 0.12);
+    border: 1px solid rgba(var(--mdui-color-outline), 0.38);
     border-radius: 10px;
     background-color: rgb(var(--mdui-color-surface-container-low));
     overflow: hidden;
@@ -643,7 +710,7 @@ mdui-dialog div[slot="description"] {
 
 .drawer-filter {
     padding: 6px 16px 8px;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+    border-bottom: 1px solid rgba(var(--mdui-color-outline), 0.24);
 }
 
 .order-filter-row {
@@ -657,7 +724,7 @@ mdui-dialog div[slot="description"] {
     min-width: 0;
     height: 32px;
     padding: 0 8px;
-    border: 1px solid rgba(0, 0, 0, 0.12);
+    border: 1px solid rgba(var(--mdui-color-outline), 0.38);
     border-radius: 8px;
     background-color: rgb(var(--mdui-color-surface-container-low));
     color: rgb(var(--mdui-color-on-surface));
@@ -682,27 +749,29 @@ mdui-dialog div[slot="description"] {
 .order-list {
     flex: 1;
     overflow-y: auto;
-    padding: 10px;
+    padding: 16px;
     display: grid;
+    /* 抽屉现在是全屏宽，宽屏下自动多列，窄屏自然回落单列 */
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 10px;
     align-content: start;
 }
 
 .order-card {
-    background-color: rgb(var(--mdui-color-surface));
+    background-color: rgb(var(--mdui-color-surface-container-highest));
     border-radius: 12px;
     padding: 14px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    border: 1px solid rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(var(--mdui-color-outline), 0.16);
     display: flex;
     flex-direction: column;
     gap: 8px;
-    transition: transform 0.2s, box-shadow 0.2s;
+    transition: background-color 0.2s, border-color 0.2s;
     cursor: pointer;
 }
 
 .order-card:hover {
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border-color: rgba(var(--mdui-color-primary), 0.38);
+    background-color: rgb(var(--mdui-color-surface-container-high));
 }
 
 .card-header {
@@ -727,50 +796,42 @@ mdui-dialog div[slot="description"] {
     font-size: 12px;
     font-weight: 600;
     padding: 2px 8px;
-    border-radius: 6px;
+    border-radius: 8px;
+    white-space: nowrap;
 }
 
-.status-0 {
-    background-color: #FFF3E0;
-    color: #E65100;
-    border: 1px solid #FFE0B2;
-}
-
+/* 状态色全部取自主题色板，避免和外面的 M3 配色割裂 */
+.status-0,
 .status-1 {
-    background-color: #E3F2FD;
-    color: #1565C0;
-    border: 1px solid #BBDEFB;
+    background-color: rgb(var(--mdui-color-secondary-container));
+    color: rgb(var(--mdui-color-on-secondary-container));
 }
 
 .status-2 {
-    background-color: #E8F5E9;
-    color: #2E7D32;
-    border: 1px solid #C8E6C9;
+    background-color: rgb(var(--mdui-color-primary-container));
+    color: rgb(var(--mdui-color-on-primary-container));
 }
 
 .status-3,
 .status-4,
 .status-6 {
-    background-color: #FFEBEE;
-    color: #C62828;
-    border: 1px solid #FFCDD2;
+    background-color: rgb(var(--mdui-color-error-container));
+    color: rgb(var(--mdui-color-on-error-container));
 }
 
 .status-5,
 .status-8,
 .status-10,
 .status-12 {
-    background-color: #F5F5F5;
-    color: #616161;
-    border: 1px solid #E0E0E0;
+    background-color: rgba(var(--mdui-color-on-surface), 0.09);
+    color: rgb(var(--mdui-color-on-surface-variant));
 }
 
 .status-7,
 .status-9,
 .status-11 {
-    background-color: #FFF8E1;
-    color: #F57F17;
-    border: 1px solid #FFECB3;
+    background-color: rgb(var(--mdui-color-tertiary-container));
+    color: rgb(var(--mdui-color-on-tertiary-container));
 }
 
 .info-grid {
@@ -779,7 +840,7 @@ mdui-dialog div[slot="description"] {
     gap: 4px 10px;
     font-size: 12px;
     color: rgb(var(--mdui-color-on-surface-variant));
-    background-color: rgb(var(--mdui-color-surface-container-low));
+    background-color: rgba(var(--mdui-color-surface), 0.6);
     padding: 8px;
     border-radius: 10px;
 }
@@ -789,17 +850,23 @@ mdui-dialog div[slot="description"] {
 }
 
 .info-grid .value {
-    font-family: 'Roboto Mono', monospace;
+    font-family: var(--app-font);
+    font-variant-numeric: tabular-nums;
     word-break: break-all;
 }
 
 .card-footer {
     margin-top: 2px;
     padding-top: 8px;
-    border-top: 1px dashed rgba(0, 0, 0, 0.1);
+    border-top: 1px dashed rgba(var(--mdui-color-outline), 0.36);
     display: flex;
     justify-content: space-between;
     align-items: center;
+}
+
+.price-label {
+    font-size: 12px;
+    color: rgb(var(--mdui-color-on-surface-variant));
 }
 
 .price-value {
@@ -808,9 +875,10 @@ mdui-dialog div[slot="description"] {
     color: rgb(var(--mdui-color-primary));
 }
 
+/* 抽屉现在是全屏宽，详情项按可用宽度自动分列，detail-full-width 才有意义 */
 .detail-grid {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 10px;
     padding: 4px 0;
 }
@@ -841,21 +909,6 @@ mdui-dialog div[slot="description"] {
     font-weight: 500;
 }
 
-.detail-divider {
-    grid-column: 1 / -1;
-    height: 1px;
-    background-color: rgba(0, 0, 0, 0.1);
-    margin: 4px 0;
-}
-
-.section-sub-title {
-    grid-column: 1 / -1;
-    font-size: 13px;
-    color: rgb(var(--mdui-color-primary));
-    font-weight: bold;
-    margin-top: 2px;
-}
-
 .detail-collapse {
     grid-column: 1 / -1;
     border: 1px solid rgba(var(--mdui-color-outline), 0.28);
@@ -878,21 +931,16 @@ mdui-dialog div[slot="description"] {
     display: none;
 }
 
+/* 详情项按面板可用宽度自动分列，避免跟着视口宽度误判（面板最宽只有 560px） */
 .detail-collapse-content {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
     gap: 10px;
     padding-top: 8px;
 }
 
 .detail-collapse-content>* {
     min-width: 0;
-}
-
-@media (min-width: 600px) {
-    .detail-collapse-content {
-        grid-template-columns: 1fr 1fr;
-    }
 }
 
 .detail-summary-card {
@@ -1068,13 +1116,9 @@ mdui-dialog div[slot="description"] {
     gap: 1px;
 }
 
-.huanxin-price-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding-top: 6px;
-    border-top: 1px dashed rgba(0, 0, 0, 0.08);
-    margin-top: 2px;
+.huanxin-order-no {
+    font-size: 11px;
+    color: rgb(var(--mdui-color-outline));
 }
 
 .huanxin-price {
@@ -1095,7 +1139,7 @@ mdui-dialog div[slot="description"] {
     align-items: center;
     justify-content: space-between;
     padding-top: 5px;
-    border-top: 1px dashed rgba(0, 0, 0, 0.08);
+    border-top: 1px dashed rgba(var(--mdui-color-outline), 0.32);
     margin-top: 2px;
 }
 
@@ -1228,14 +1272,15 @@ mdui-dialog div[slot="description"] {
     flex-shrink: 0;
 }
 
+/* 挂在 .shop-info 内，跟随门店名对齐（原来固定 left:16px 会偏到状态标签下方） */
 .shop-switch-menu {
-    position: fixed;
-    top: 72px;
-    left: 16px;
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
     min-width: 180px;
     max-width: 260px;
     background: rgb(var(--mdui-color-surface-container));
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(var(--mdui-color-outline), 0.24);
     border-radius: 16px;
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
     padding: 8px;
@@ -1275,7 +1320,7 @@ mdui-dialog div[slot="description"] {
     max-width: 240px;
     height: auto;
     border-radius: 8px;
-    border: 1px solid #eee;
+    border: 1px solid rgba(var(--mdui-color-outline), 0.3);
     margin: 10px auto;
     display: block;
 }
@@ -1329,7 +1374,7 @@ mdui-dialog div[slot="description"] {
 
 .log-entry {
     margin-bottom: 4px;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+    border-bottom: 1px solid rgba(var(--mdui-color-outline), 0.16);
     padding-bottom: 2px;
 }
 
@@ -1385,14 +1430,14 @@ mdui-dialog div[slot="description"] {
     align-items: center;
     gap: 10px;
     padding-top: 100px;
-    color: #999;
+    color: rgb(var(--mdui-color-outline));
 }
 
 .draft-card {
-    background-color: rgb(var(--mdui-color-surface));
+    background-color: rgb(var(--mdui-color-surface-container-highest));
     border-radius: 12px;
     padding: 14px;
-    border: 1px solid rgba(0, 0, 0, 0.05);
+    border: 1px solid rgba(var(--mdui-color-outline), 0.16);
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -1438,7 +1483,7 @@ mdui-dialog div[slot="description"] {
     justify-content: space-between;
     align-items: center;
     padding-top: 4px;
-    border-top: 1px dashed rgba(0, 0, 0, 0.08);
+    border-top: 1px dashed rgba(var(--mdui-color-outline), 0.32);
 }
 
 .draft-card-time {
@@ -1467,7 +1512,8 @@ mdui-dialog div[slot="description"] {
     flex-direction: column;
     gap: 10px;
     max-height: 65vh;
-    min-height: 340px;
+    /* 矮屏时 min-height 不能超过 max-height，否则底部“刷新商品库”一栏会被挤到面板外 */
+    min-height: min(340px, 65vh);
     overflow: hidden;
 }
 
@@ -1475,7 +1521,7 @@ mdui-dialog div[slot="description"] {
     display: flex;
     align-items: center;
     gap: 0;
-    border: 1px solid rgba(0, 0, 0, 0.12);
+    border: 1px solid rgba(var(--mdui-color-outline), 0.38);
     border-radius: 8px;
     background-color: rgb(var(--mdui-color-surface-container-low));
     overflow: hidden;
@@ -1530,11 +1576,10 @@ mdui-dialog div[slot="description"] {
 }
 
 .ps-search-clear:hover {
-    background: rgba(0, 0, 0, 0.06);
+    background: rgba(var(--mdui-color-on-surface), 0.08);
 }
 
 .ps-results-list {
-    max-height: 280px;
     overflow-y: auto;
     border-radius: 10px;
     border: 1px solid rgba(var(--mdui-color-outline), 0.12);
@@ -1546,6 +1591,7 @@ mdui-dialog div[slot="description"] {
     display: none;
     align-items: center;
     justify-content: space-between;
+    flex-shrink: 0;
     font-size: 11px;
     color: rgb(var(--mdui-color-outline));
     padding-top: 8px;
@@ -1658,11 +1704,11 @@ mdui-dialog div[slot="description"] {
 .ps-result-disabled {
     opacity: 0.5;
     cursor: not-allowed;
-    background-color: rgba(0, 0, 0, 0.02);
+    background-color: rgba(var(--mdui-color-on-surface), 0.04);
 }
 
 .ps-result-disabled:hover {
-    background-color: rgba(0, 0, 0, 0.02);
+    background-color: rgba(var(--mdui-color-on-surface), 0.04);
 }
 
 .ps-disabled-tag {

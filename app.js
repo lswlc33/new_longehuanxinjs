@@ -32,6 +32,9 @@
         PASS_GOODS_COUNT_KEY: "PASS_GOODS_LAST_COUNT"
         ,ORDER_QUERY_MAX_PAGES: 200
         ,ORDER_REQUEST_TIMEOUT_MS: 20000
+        ,REMIND_POLL_INTERVAL_MS: 3000
+        ,REMIND_POLL_MAX_ATTEMPTS: 200
+        ,ORDER_NOTIFY_MAX_RETRIES: 10
     };
 
     const payStates = {
@@ -81,8 +84,11 @@
         currentDetailOrder: null,
         remindPollTimer: null,
         isRemindPolling: false,
+        remindPollAttempts: 0,
+        remindPollInFlight: false,
         draftsData: { version: 1, drafts: {} },
         currentDraftId: null,
+        isLoadingDraft: false,
         _queuedOrdersCache: null,
         _queuedOrdersCacheDirty: true,
         orderCurrentPage: 1,
@@ -250,39 +256,45 @@
         const raw = localStorage.getItem(CONSTANTS.ORDER_QUEUE_KEY);
         const parsed = raw ? safeParseJSON(raw, null) : null;
         if (parsed && parsed.stores && typeof parsed.stores === "object") {
+            const stores = {};
+            Object.entries(parsed.stores).forEach(([storedStoreKey, bucket]) => {
+                const storeKey = resolvePersistedStoreKey(storedStoreKey);
+                const normalizedOrders = Object.fromEntries(Object.entries(bucket?.orders || {}).map(([orderNumber, item]) => ([
+                    orderNumber,
+                    {
+                        ...item,
+                        storeKey,
+                        storeNameSnapshot: item?.storeNameSnapshot || bucket?.storeNameSnapshot || getStoreContext(storeKey).storeName,
+                        storeIndex: item?.storeIndex ?? bucket?.storeIndex ?? getStoreIndexByKey(storeKey),
+                        version: 2,
+                        createdAt: Number(item?.createdAt) || Number(item?.lastCheckAt) || Date.now(),
+                        retryCount: Number(item?.retryCount || 0),
+                        lastError: item?.lastError || "",
+                        lastPushAt: item?.lastPushAt || 0,
+                        pendingNotification: item?.pendingNotification || "",
+                        queryRetryCount: Number(item?.queryRetryCount ?? item?.retryCount ?? 0),
+                        queryLastError: item?.queryLastError ?? item?.lastError ?? "",
+                        queryLastCheckAt: item?.queryLastCheckAt ?? item?.lastCheckAt ?? 0,
+                        notificationRetryCount: Number(item?.notificationRetryCount || 0),
+                        notificationLastError: item?.notificationLastError || "",
+                        notificationLastAttemptAt: item?.notificationLastAttemptAt ?? item?.lastPushAt ?? 0
+                    }
+                ])));
+                // 两个旧键映射到同一个 storeKey 时合并订单，否则会丢掉待推送的已付款订单
+                if (!stores[storeKey]) {
+                    stores[storeKey] = {
+                        storeNameSnapshot: bucket?.storeNameSnapshot || getStoreContext(storeKey).storeName,
+                        storeIndex: bucket?.storeIndex ?? getStoreIndexByKey(storeKey),
+                        orders: normalizedOrders
+                    };
+                } else {
+                    Object.assign(stores[storeKey].orders, normalizedOrders);
+                }
+            });
             state.orderQueueByStore = {
                 version: 2,
                 updatedAt: parsed.updatedAt || Date.now(),
-                stores: Object.fromEntries(Object.entries(parsed.stores).map(([storedStoreKey, bucket]) => {
-                    const storeKey = resolvePersistedStoreKey(storedStoreKey);
-                    return [
-                    storeKey,
-                    {
-                        storeNameSnapshot: bucket?.storeNameSnapshot || getStoreContext(storeKey).storeName,
-                        storeIndex: bucket?.storeIndex ?? getStoreIndexByKey(storeKey),
-                        orders: Object.fromEntries(Object.entries(bucket?.orders || {}).map(([orderNumber, item]) => ([
-                            orderNumber,
-                            {
-                                ...item,
-                                storeKey,
-                                storeNameSnapshot: item?.storeNameSnapshot || bucket?.storeNameSnapshot || getStoreContext(storeKey).storeName,
-                                storeIndex: item?.storeIndex ?? bucket?.storeIndex ?? getStoreIndexByKey(storeKey),
-                                version: 2,
-                                retryCount: Number(item?.retryCount || 0),
-                                lastError: item?.lastError || "",
-                                lastPushAt: item?.lastPushAt || 0,
-                                pendingNotification: item?.pendingNotification || "",
-                                queryRetryCount: Number(item?.queryRetryCount ?? item?.retryCount ?? 0),
-                                queryLastError: item?.queryLastError ?? item?.lastError ?? "",
-                                queryLastCheckAt: item?.queryLastCheckAt ?? item?.lastCheckAt ?? 0,
-                                notificationRetryCount: Number(item?.notificationRetryCount || 0),
-                                notificationLastError: item?.notificationLastError || "",
-                                notificationLastAttemptAt: item?.notificationLastAttemptAt ?? item?.lastPushAt ?? 0
-                            }
-                        ])))
-                    }
-                ];
-                }))
+                stores
             };
         } else {
             state.orderQueueByStore = { version: 2, updatedAt: Date.now(), stores: {} };
@@ -298,14 +310,15 @@
     function loadOrderPushSentMap() {
         const raw = localStorage.getItem(CONSTANTS.ORDER_PUSH_SENT_KEY);
         const parsed = raw ? safeParseJSON(raw, {}) : {};
-        state.orderPushSentMap = Object.fromEntries(Object.entries(parsed || {}).map(([key, value]) => {
+        const merged = {};
+        Object.entries(parsed || {}).forEach(([key, value]) => {
             const parts = key.split('|');
             if (parts.length >= 3) parts[0] = resolvePersistedStoreKey(parts[0]);
-            return [parts.join('|'), value];
-        }));
-        if (!state.orderPushSentMap || typeof state.orderPushSentMap !== "object") {
-            state.orderPushSentMap = {};
-        }
+            const normalizedKey = parts.join('|');
+            // 键冲突时保留较新的推送时间，避免把“已推送”标记覆盖成更早的时间
+            merged[normalizedKey] = Math.max(Number(merged[normalizedKey] || 0), Number(value) || 0);
+        });
+        state.orderPushSentMap = merged;
     }
 
     function saveOrderPushSentMap() {
@@ -325,6 +338,7 @@
     function cleanupOrderQueue() {
         const now = Date.now();
         const stores = state.orderQueueByStore.stores || {};
+        let removed = 0;
 
         Object.keys(stores).forEach(storeKey => {
             const bucket = stores[storeKey];
@@ -332,10 +346,13 @@
 
             Object.keys(orders).forEach(orderNumber => {
                 const item = orders[orderNumber] || {};
-                const lastTouch = item.lastCheckAt || item.createdAt || 0;
+                // 按创建时间计龄：lastCheckAt 每轮轮询都会刷新，用它算龄会导致 TTL 永不生效
+                const createdAt = Number(item.createdAt) || 0;
 
-                if (!lastTouch || now - lastTouch > CONSTANTS.ORDER_QUEUE_TTL_MS) {
+                if (!createdAt || now - createdAt > CONSTANTS.ORDER_QUEUE_TTL_MS) {
+                    addLog(`订单[${orderNumber}]超过 ${Math.round(CONSTANTS.ORDER_QUEUE_TTL_MS / 3600000)} 小时仍未终态，移出轮询队列`, "warn");
                     delete orders[orderNumber];
+                    removed += 1;
                 }
             });
 
@@ -346,6 +363,8 @@
 
         saveOrderQueue();
         invalidateQueuedOrdersCache();
+        if (removed) updateQueueBadge();
+        return removed;
     }
 
     function ensureStoreQueueBucket(storeKey) {
@@ -366,25 +385,28 @@
         addLog(`订单[${orderNumber}]入队轮询，所属门店[${storeKey}]`, "info");
         const bucket = ensureStoreQueueBucket(storeKey);
         const context = getStoreContext(storeKey, meta);
+        // 已在队列里的订单只做字段合并，避免退款入队把 buyerMobile / 轮询进度冲掉
+        const existing = bucket.orders[orderNumber] || {};
+        const pick = (key, fallback) => (meta[key] !== undefined ? meta[key] : (existing[key] !== undefined ? existing[key] : fallback));
         bucket.orders[orderNumber] = {
             version: 2,
             storeKey,
-            storeNameSnapshot: meta.storeNameSnapshot || context.storeName,
-            storeIndex: meta.storeIndex ?? context.storeIndex,
-            lastState: Number(meta.lastState ?? 0),
-            buyerMobile: meta.buyerMobile || "",
-            createdAt: meta.createdAt || Date.now(),
-            lastCheckAt: meta.lastCheckAt || 0,
-            retryCount: Number(meta.retryCount || 0),
-            lastError: meta.lastError || "",
-            lastPushAt: meta.lastPushAt || 0,
-            pendingNotification: meta.pendingNotification || "",
-            queryRetryCount: Number(meta.queryRetryCount ?? meta.retryCount ?? 0),
-            queryLastError: meta.queryLastError ?? meta.lastError ?? "",
-            queryLastCheckAt: meta.queryLastCheckAt ?? meta.lastCheckAt ?? 0,
-            notificationRetryCount: Number(meta.notificationRetryCount || 0),
-            notificationLastError: meta.notificationLastError || "",
-            notificationLastAttemptAt: meta.notificationLastAttemptAt ?? meta.lastPushAt ?? 0
+            storeNameSnapshot: pick('storeNameSnapshot', context.storeName),
+            storeIndex: pick('storeIndex', context.storeIndex),
+            lastState: Number(pick('lastState', 0)),
+            buyerMobile: pick('buyerMobile', ""),
+            createdAt: existing.createdAt || meta.createdAt || Date.now(),
+            lastCheckAt: pick('lastCheckAt', 0),
+            retryCount: Number(pick('retryCount', 0)),
+            lastError: pick('lastError', ""),
+            lastPushAt: pick('lastPushAt', 0),
+            pendingNotification: pick('pendingNotification', ""),
+            queryRetryCount: Number(meta.queryRetryCount ?? meta.retryCount ?? existing.queryRetryCount ?? 0),
+            queryLastError: meta.queryLastError ?? meta.lastError ?? existing.queryLastError ?? "",
+            queryLastCheckAt: meta.queryLastCheckAt ?? meta.lastCheckAt ?? existing.queryLastCheckAt ?? 0,
+            notificationRetryCount: Number(pick('notificationRetryCount', 0)),
+            notificationLastError: pick('notificationLastError', ""),
+            notificationLastAttemptAt: meta.notificationLastAttemptAt ?? meta.lastPushAt ?? existing.notificationLastAttemptAt ?? 0
         };
         saveOrderQueue();
         invalidateQueuedOrdersCache();
@@ -458,20 +480,36 @@
         const raw = localStorage.getItem(CONSTANTS.DRAFTS_KEY);
         const parsed = raw ? safeParseJSON(raw, null) : null;
         if (parsed && parsed.drafts && typeof parsed.drafts === "object") {
-            state.draftsData = {
-                version: 2,
-                drafts: Object.fromEntries(Object.entries(parsed.drafts).map(([storeKey, drafts]) => ([
-                    resolvePersistedStoreKey(storeKey),
-                    drafts
-                ])))
-            };
+            // 旧键与新键可能同时存在并解析到同一个 storeKey，必须合并而不是后者覆盖前者
+            const merged = {};
+            Object.entries(parsed.drafts).forEach(([storedKey, drafts]) => {
+                const storeKey = resolvePersistedStoreKey(storedKey);
+                const list = Array.isArray(drafts) ? drafts : [];
+                if (!merged[storeKey]) {
+                    merged[storeKey] = [...list];
+                    return;
+                }
+                const seen = new Set(merged[storeKey].map(d => d?.id));
+                list.forEach(d => {
+                    if (!d?.id || seen.has(d.id)) return;
+                    seen.add(d.id);
+                    merged[storeKey].push(d);
+                });
+            });
+            Object.values(merged).forEach(list => list.sort((a, b) => Number(b?.updatedAt || 0) - Number(a?.updatedAt || 0)));
+            state.draftsData = { version: 2, drafts: merged };
         } else {
             state.draftsData = { version: 1, drafts: {} };
         }
     }
 
     function saveDraftsToStorage() {
-        localStorage.setItem(CONSTANTS.DRAFTS_KEY, JSON.stringify(state.draftsData));
+        try {
+            localStorage.setItem(CONSTANTS.DRAFTS_KEY, JSON.stringify(state.draftsData));
+        } catch (e) {
+            addLog(`暂存写入失败: ${e.message}`, "error");
+            showSnackbar({ message: "暂存保存失败，本地存储可能已满", closeable: true });
+        }
     }
 
     function getCurrentStoreDrafts() {
@@ -483,24 +521,23 @@
         state.draftsData.drafts[getCurrentStoreKey()] = list;
     }
 
-    function getDraftById(draftId) {
-        for (const storeKey in state.draftsData.drafts) {
-            const arr = state.draftsData.drafts[storeKey] || [];
-            const found = arr.find(d => d.id === draftId);
-            if (found) return found;
-        }
-        return null;
+    /** 资格是多选的，全部记下来；category 保留单值以兼容旧数据 */
+    function getSelectedCategoryValues() {
+        return Array.from(document.querySelectorAll('#productCategoryChips mdui-chip'))
+            .filter(c => c.selected)
+            .map(c => c.value);
     }
 
     function getSelectedCategoryValue() {
-        const chips = document.querySelectorAll('#productCategoryChips mdui-chip');
-        const selected = Array.from(chips).find(c => c.selected);
-        return selected ? selected.value : "";
+        return getSelectedCategoryValues()[0] || "";
     }
 
-    function setSelectedCategory(value) {
-        const chips = document.querySelectorAll('#productCategoryChips mdui-chip');
-        chips.forEach(c => { c.selected = (c.value === value); });
+    function setSelectedCategories(values) {
+        const list = Array.isArray(values) ? values.filter(Boolean) : (values ? [values] : []);
+        document.querySelectorAll('#productCategoryChips mdui-chip').forEach(c => {
+            c.selected = list.includes(c.value);
+        });
+        sortSelectedChipsToTop();
     }
 
     function getTownNameByCode(townCode) {
@@ -519,6 +556,7 @@
             buyerName: document.querySelector('#buyerName').value,
             buyerMobile: document.querySelector('#buyerMobile').value,
             category: getSelectedCategoryValue(),
+            categories: getSelectedCategoryValues(),
             city: els.city.value,
             district: els.district.value,
             townCode: els.town.value,
@@ -591,71 +629,99 @@
         const storeKey = getCurrentStoreKey();
         const list = state.draftsData.drafts[storeKey] || [];
         const idx = list.findIndex(d => d.id === draftId);
-        if (idx === -1) return;
+        if (idx === -1) return false;
         list.splice(idx, 1);
-        state.draftsData.drafts[storeKey] = list;
+        if (list.length) {
+            state.draftsData.drafts[storeKey] = list;
+        } else {
+            delete state.draftsData.drafts[storeKey];
+        }
         saveDraftsToStorage();
         if (state.currentDraftId === draftId) {
             state.currentDraftId = null;
         }
         addLog(`删除暂存`, "info");
+        return true;
     }
 
     function clearCurrentStoreDrafts() {
-        state.draftsData.drafts[getCurrentStoreKey()] = [];
+        delete state.draftsData.drafts[getCurrentStoreKey()];
         saveDraftsToStorage();
         state.currentDraftId = null;
         addLog("已清空当前门店所有暂存", "info");
     }
 
+    /**
+     * 恢复暂存到表单。整个过程约 1.5 秒，中途门店可能被切换，
+     * 因此每个 await 之后都要确认门店与 UI 世代没变，否则把数据写进别的门店。
+     */
     async function loadDraftToForm(draftId) {
-        const draft = getDraftById(draftId);
-        if (!draft) return false;
-        const fd = draft.formData;
+        const storeKey = getCurrentStoreKey();
+        const uiGeneration = state.currentUiGeneration;
+        const list = state.draftsData.drafts[storeKey] || [];
+        const draft = list.find(d => d.id === draftId);
+        if (!draft) {
+            showSnackbar({ message: "暂存不存在或不属于当前门店" });
+            return false;
+        }
+        const fd = draft.formData || {};
+        const alive = () => uiGeneration === state.currentUiGeneration && storeKey === getCurrentStoreKey();
+        const wait = async (ms) => {
+            await new Promise(r => setTimeout(r, ms));
+            return alive();
+        };
 
         document.querySelector('#buyerMobile').value = fd.buyerMobile || '';
         document.querySelector('#buyerName').value = fd.buyerName || '';
-        await new Promise(r => setTimeout(r, 200));
+        if (!await wait(200)) return false;
 
-        setSelectedCategory(fd.category);
-        await new Promise(r => setTimeout(r, 150));
+        setSelectedCategories(fd.categories || fd.category);
+        if (!await wait(150)) return false;
 
-        if (fd.city && state.regionTree[fd.city]) {
-            els.city.value = fd.city;
-            await new Promise(r => setTimeout(r, 150));
-            populateSelect(els.district, Object.keys(state.regionTree[fd.city]), fd.district);
-            await new Promise(r => setTimeout(r, 200));
-            const towns = state.regionTree[fd.city]?.[fd.district] || [];
-            populateSelect(els.town, towns, fd.townCode);
-            await new Promise(r => setTimeout(r, 150));
+        let addressRestored = true;
+        if (fd.city) {
+            if (!state.regionTree[fd.city]) {
+                // 地址库还没加载完，这里静默跳过会让操作员在提交时才发现地址是空的
+                addressRestored = false;
+            } else {
+                els.city.value = fd.city;
+                if (!await wait(150)) return false;
+                populateSelect(els.district, Object.keys(state.regionTree[fd.city]), fd.district);
+                if (!await wait(200)) return false;
+                const towns = state.regionTree[fd.city]?.[fd.district] || [];
+                populateSelect(els.town, towns, fd.townCode);
+                if (!await wait(150)) return false;
+            }
         }
 
         document.querySelector('#detailAddress').value = fd.detailAddress || '';
-        await new Promise(r => setTimeout(r, 150));
+        if (!await wait(150)) return false;
 
         document.querySelector('#goodsCode').value = fd.goodsCode || '';
         document.querySelector('#goodsCode').dataset.goodsName = fd.goodsName || '';
         if (fd.goodsCode && fd.goodsName) {
             saveRecentGoods(fd.goodsCode, fd.goodsName);
         }
-        await new Promise(r => setTimeout(r, 200));
+        if (!await wait(200)) return false;
 
         document.querySelector('#filingPrice').value = fd.filingPrice || '';
-        await new Promise(r => setTimeout(r, 100));
         document.querySelector('#shopPrice').value = fd.shopPrice || '';
-        await new Promise(r => setTimeout(r, 100));
         document.querySelector('#actualPrice').value = fd.actualPrice || '';
-        await new Promise(r => setTimeout(r, 100));
         document.querySelector('#subsidyPrice').value = fd.subsidyPrice || '';
-        await new Promise(r => setTimeout(r, 100));
+        if (!await wait(100)) return false;
 
         document.querySelector('#autoOrderNumCheckbox').checked = fd.autoOrderNum !== false;
         toggleOrderInput(fd.shopOrderNumber);
 
+        validateShopPriceAgainstFiling();
         state.currentDraftId = draftId;
         updateDraftBadge();
         schedulePreviewRender();
         addLog(`已加载暂存: ${draft.label}`, "info");
+        if (!addressRestored) {
+            showSnackbar({ message: "地址库未就绪，地址未恢复，请稍后重新加载该暂存", closeable: true });
+            addLog(`暂存[${draft.label}]的地址未恢复：地址库尚未加载`, "warn");
+        }
         return true;
     }
 
@@ -665,7 +731,9 @@
         for (const storeKey in state.draftsData.drafts) {
             const list = state.draftsData.drafts[storeKey] || [];
             const filtered = list.filter(d => {
-                const valid = (now - d.updatedAt) < CONSTANTS.DRAFTS_TTL_MS;
+                // 缺少/非法时间戳的暂存不能当成过期直接删掉
+                const stamp = Number(d?.updatedAt) || Number(d?.createdAt) || 0;
+                const valid = !stamp || (now - stamp) < CONSTANTS.DRAFTS_TTL_MS;
                 if (!valid) cleaned++;
                 return valid;
             });
@@ -674,17 +742,24 @@
         }
         if (cleaned > 0) {
             addLog(`已清理 ${cleaned} 条过期暂存`, "info");
-            saveDraftsToStorage();
         }
+        saveDraftsToStorage();
     }
 
     function saveCurrentAsDraft() {
         if (!isFormHasContent()) {
             return showSnackbar({ message: "表单为空，请先填写内容" });
         }
-        const draft = createDraft();
-        showSnackbar({ message: `已暂存: ${draft.label}` });
+        // 已经加载了某条暂存时就地更新，否则每次点“暂存”都会多出一张几乎一样的卡
+        if (state.currentDraftId && updateDraft(state.currentDraftId)) {
+            addLog(`更新暂存: ${state.currentDraftId}`, "info");
+            showSnackbar({ message: "已更新当前暂存" });
+        } else {
+            const draft = createDraft();
+            showSnackbar({ message: `已暂存: ${draft.label}` });
+        }
         updateDraftBadge();
+        renderDraftDrawerList();
     }
 
     function updateDraftBadge() {
@@ -765,20 +840,28 @@
     }
 
     async function handleDraftLoad(draftId) {
+        // 连点两张卡会把两份数据交叉写进同一个表单，这里做互斥
+        if (state.isLoadingDraft) return showSnackbar({ message: "正在加载暂存，请稍候" });
+        state.isLoadingDraft = true;
         const loadBtn = document.querySelector(`.draft-load-btn[data-draft-id="${draftId}"]`);
         if (loadBtn) loadBtn.loading = true;
-        await loadDraftToForm(draftId);
-        if (loadBtn) loadBtn.loading = false;
+        // 先关抽屉再恢复，避免恢复过程中还能继续点其它卡片
         const drawer = document.getElementById('draftDrawer');
         if (drawer) drawer.open = false;
-        showSnackbar({ message: "已加载暂存订单" });
+        try {
+            const ok = await loadDraftToForm(draftId);
+            if (ok) showSnackbar({ message: "已加载暂存订单" });
+        } finally {
+            if (loadBtn) loadBtn.loading = false;
+            state.isLoadingDraft = false;
+        }
     }
 
     function handleDraftDelete(draftId) {
-        deleteDraft(draftId);
+        const removed = deleteDraft(draftId);
         renderDraftDrawerList();
         updateDraftBadge();
-        showSnackbar({ message: "已删除暂存" });
+        showSnackbar({ message: removed ? "已删除暂存" : "该暂存不存在或不属于当前门店" });
     }
 
     function makePushSentKey(storeKey, orderNumber, tag = "PAID") {
@@ -1659,6 +1742,9 @@
         if (index === state.currentStoreIndex) return;
         state.currentDraftId = null;
         stopRemindPolling();
+        showRemindBtn(false);
+        // 换店等于换了资格上下文，上一位买家的品类不能留在屏幕上
+        resetQualificationChips();
         ProductSearch.resetCache();
         setCurrentStoreIndex(index, true);
         updateDraftBadge();
@@ -1883,6 +1969,9 @@
 
     async function pollOrderStatus(triggerReason = "interval") {
         if (state.isCheckingOrders) return;
+        // 每轮先做一次过期清理，否则页面长时间不关，TTL 永远没机会执行
+        cleanupOrderQueue();
+        cleanupOrderPushSentMap();
         if (!hasQueuedOrders()) {
             stopPolling();
             return;
@@ -1911,17 +2000,30 @@
         }
     }
 
+    /** 通知退避时间：与查询退避同一套指数公式，上限 5 分钟 */
+    function getNotificationDelay(item) {
+        return Math.min(CONSTANTS.ORDER_POLL_INTERVAL_MS * (2 ** Math.min(Number(item?.notificationRetryCount || 0), 6)), 5 * 60 * 1000);
+    }
+
     async function processQueuedOrder(entry, tokenCache) {
         const { storeKey, orderNumber } = entry;
-        const latestItem = state.orderQueueByStore.stores?.[storeKey]?.orders?.[orderNumber];
+        const readItem = () => state.orderQueueByStore.stores?.[storeKey]?.orders?.[orderNumber];
+        let latestItem = readItem();
         if (!latestItem) return;
         const now = Date.now();
         const retryDelay = Math.min(CONSTANTS.ORDER_POLL_INTERVAL_MS * (2 ** Math.min(Number(latestItem.queryRetryCount || 0), 6)), 5 * 60 * 1000);
         if (latestItem.queryLastError && latestItem.queryLastCheckAt && now - latestItem.queryLastCheckAt < retryDelay) return;
 
+        // 卡在“待推送”的订单同样要退避查询，否则会每 5 秒打一次订单详情接口
+        if (latestItem.pendingNotification && latestItem.notificationLastAttemptAt
+            && now - latestItem.notificationLastAttemptAt < getNotificationDelay(latestItem)) return;
+
         if (!tokenCache[storeKey]) {
             tokenCache[storeKey] = await getTokenForStoreKey(storeKey);
         }
+
+        // await 之后队列项可能已被补推送/退款流程替换或移除
+        if (readItem() !== latestItem) return;
 
         const token = tokenCache[storeKey];
         if (!token) {
@@ -1936,6 +2038,7 @@
 
         const res = await callApiWithToken(token, '/salesuser/getSalesOrderDetail', 'GET', { orderNumber }, storeKey);
         tokenCache[storeKey] = ensureStoreRuntime(storeKey).token || token;
+        if (readItem() !== latestItem) return;
         if (!(res?.code === 0 && res.data?.payOrder)) {
             latestItem.lastCheckAt = now;
             latestItem.queryLastCheckAt = now;
@@ -1956,7 +2059,7 @@
         latestItem.queryLastError = "";
         saveOrderQueue();
 
-        const notificationDelay = Math.min(CONSTANTS.ORDER_POLL_INTERVAL_MS * (2 ** Math.min(Number(latestItem.notificationRetryCount || 0), 6)), 5 * 60 * 1000);
+        const notificationDelay = getNotificationDelay(latestItem);
         const notificationReady = !latestItem.pendingNotification || !latestItem.notificationLastError || !latestItem.notificationLastAttemptAt || Date.now() - latestItem.notificationLastAttemptAt >= notificationDelay;
         if (newState !== oldState || (latestItem.pendingNotification && notificationReady) || (newState === 2 && !isOrderPushed(storeKey, orderNumber, "PAID") && notificationReady)) {
             await handleOrderStateChange(storeKey, orderNumber, order, newState, oldState, latestItem, res.data);
@@ -1973,28 +2076,44 @@
         }
 
         if (ORDER_TERMINAL_STATES.includes(newState)) {
+            /**
+             * 推送失败时是否放弃：达到重试上限或属于不可恢复的配置问题就放弃，
+             * 否则订单会永远留在队列里、每轮继续查详情，角标也永远清不掉。
+             */
+            const shouldGiveUp = (result) => {
+                const retried = Number(latestItem.notificationRetryCount || 0) + 1;
+                return result?.code === "CONFIG_MISSING" || retried >= CONSTANTS.ORDER_NOTIFY_MAX_RETRIES;
+            };
+
             if (latestItem.pendingNotification === "REFUND" && !isOrderPushed(storeKey, orderNumber, "REFUND")) {
                 if (!Array.isArray(detailData.refundOrderVos) || !detailData.refundOrderVos.length) {
                     latestItem.notificationRetryCount = Number(latestItem.notificationRetryCount || 0) + 1;
                     latestItem.notificationLastError = "退款详情尚未就绪";
                     latestItem.notificationLastAttemptAt = Date.now();
                     saveOrderQueue();
-                    return;
+                    if (latestItem.notificationRetryCount < CONSTANTS.ORDER_NOTIFY_MAX_RETRIES) return;
+                    addLog(`订单[${orderNumber}]退款详情长期未就绪，放弃推送并移出队列`, "warn");
+                    latestItem.pendingNotification = "";
+                } else {
+                    const refundMessage = buildDingTalkRefundMessage({ ...detailData, payOrder: order });
+                    const refundPushResult = await sendDingTalkMessage(refundMessage);
+                    latestItem.lastPushAt = Date.now();
+                    latestItem.notificationLastAttemptAt = latestItem.lastPushAt;
+                    if (!refundPushResult?.ok) {
+                        const giveUp = shouldGiveUp(refundPushResult);
+                        latestItem.notificationRetryCount = Number(latestItem.notificationRetryCount || 0) + 1;
+                        latestItem.notificationLastError = refundPushResult?.message || "退款通知推送失败";
+                        latestItem.pendingNotification = giveUp ? "" : "REFUND";
+                        saveOrderQueue();
+                        if (!giveUp) return;
+                        addLog(`订单[${orderNumber}]退款通知推送失败已达上限，放弃推送并移出队列: ${latestItem.notificationLastError}`, "error");
+                    } else {
+                        latestItem.pendingNotification = "";
+                        latestItem.notificationRetryCount = 0;
+                        latestItem.notificationLastError = "";
+                        markOrderPushed(storeKey, orderNumber, "REFUND");
+                    }
                 }
-                const refundMessage = buildDingTalkRefundMessage({ ...detailData, payOrder: order });
-                const refundPushResult = await sendDingTalkMessage(refundMessage);
-                latestItem.lastPushAt = Date.now();
-                latestItem.notificationLastAttemptAt = latestItem.lastPushAt;
-                if (!refundPushResult?.ok) {
-                    latestItem.notificationRetryCount = Number(latestItem.notificationRetryCount || 0) + 1;
-                    latestItem.notificationLastError = refundPushResult?.message || "退款通知推送失败";
-                    saveOrderQueue();
-                    return;
-                }
-                latestItem.pendingNotification = "";
-                latestItem.notificationRetryCount = 0;
-                latestItem.notificationLastError = "";
-                markOrderPushed(storeKey, orderNumber, "REFUND");
             }
             if (newState === 2 && !isOrderPushed(storeKey, orderNumber, "PAID")) {
                 if (els.qrDialog.open && state.currentQrOrderContext?.storeKey === storeKey && state.currentQrOrderContext?.ccbPayOrderNumber === orderNumber) {
@@ -2008,21 +2127,25 @@
                 latestItem.lastPushAt = Date.now();
                 latestItem.notificationLastAttemptAt = latestItem.lastPushAt;
                 if (!pushResult?.ok) {
-                    latestItem.pendingNotification = "PAID";
+                    const giveUp = shouldGiveUp(pushResult);
                     latestItem.notificationRetryCount = Number(latestItem.notificationRetryCount || 0) + 1;
                     latestItem.notificationLastError = pushResult?.message || "钉钉推送失败";
+                    latestItem.pendingNotification = giveUp ? "" : "PAID";
                     saveOrderQueue();
-                    return;
+                    if (!giveUp) return;
+                    addLog(`订单[${orderNumber}]钉钉推送失败已放弃（${latestItem.notificationLastError}），可在订单详情里手动补推送`, "error");
+                } else {
+                    latestItem.pendingNotification = "";
+                    latestItem.notificationRetryCount = 0;
+                    latestItem.notificationLastError = "";
+                    markOrderPushed(storeKey, orderNumber, "PAID");
                 }
-                latestItem.pendingNotification = "";
-                latestItem.notificationRetryCount = 0;
-                latestItem.notificationLastError = "";
-                markOrderPushed(storeKey, orderNumber, "PAID");
             }
 
             dequeueOrder(storeKey, orderNumber);
 
-            if (document.getElementById('orderDrawer').open) {
+            // 只有当前门店的列表才需要刷新，否则会把别的门店已翻的页码重置掉
+            if (storeKey === getCurrentStoreKey() && document.getElementById('orderDrawer').open) {
                 fetchOrders();
             }
         }
@@ -2152,6 +2275,21 @@
             ...item,
             name: item.shopName || item.name || `门店${idx + 1}`
         }));
+
+        // 原地替换 payload 等于把这个 storeKey 指向了另一家实体店，
+        // 而暂存和待检订单仍绑在旧 key 上，会串店。这里与删除门店同样拦截。
+        for (let index = 0; index < nextStores.length; index += 1) {
+            const storeKey = getStoreKey(nextStores[index], index);
+            const previousStore = previousStoresByKey.get(storeKey);
+            if (!previousStore || previousStore.payload === nextStores[index].payload) continue;
+            const queuedCount = Object.keys(state.orderQueueByStore.stores?.[storeKey]?.orders || {}).length;
+            const draftCount = (state.draftsData.drafts?.[storeKey] || []).length;
+            if (queuedCount || draftCount) {
+                showError(`${getStoreDisplayName(nextStores[index], index)} 仍有${queuedCount ? `${queuedCount}个待处理订单` : ''}${queuedCount && draftCount ? '和' : ''}${draftCount ? `${draftCount}个暂存订单` : ''}，请先处理完再更换该门店的 Payload`);
+                return;
+            }
+        }
+
         nextStores.forEach((store, index) => {
             const storeKey = getStoreKey(store, index);
             const previousStore = previousStoresByKey.get(storeKey);
@@ -2171,6 +2309,11 @@
         );
         state.configDraft = null;
         state.currentUiGeneration += 1;
+        // saveConfig 也会改变当前门店，必须和 switchStore 一样重置这些跨门店状态
+        state.currentDraftId = null;
+        stopRemindPolling();
+        showRemindBtn(false);
+        resetQualificationChips();
         const currentRuntime = ensureStoreRuntime(getCurrentStoreKey());
         state.currentToken = currentRuntime.token || "";
         state.currentUniscid = currentRuntime.uniscid || "";
@@ -2199,6 +2342,8 @@
 
         renderPayloadInputs();
         renderShopSwitchMenu();
+        updateDraftBadge();
+        updateQueueBadge();
         closeConfigDialog();
         showSnackbar({ message: "配置已保存，正在重连..." });
         autoLogin();
@@ -2480,7 +2625,7 @@
             const failureText = state.orderQueryFailures.length
                 ? '订单加载失败，请重试'
                 : '未找到相关订单';
-            container.innerHTML = `<div style="padding: 32px; text-align: center; color: #999;">${escapeHtml(failureText)}</div>`;
+            container.innerHTML = `<div class="draft-empty" style="grid-column:1/-1;">${escapeHtml(failureText)}</div>`;
             return;
         }
         renderOrderList(container, state.orderSearchResults, state.orderHasMore);
@@ -2651,8 +2796,8 @@
             </div>
             ${recordText ? `<div class="huanxin-row"><span class="huanxin-label">核验</span><span class="huanxin-value">${escapeHtml(recordText)}</span></div>` : ''}
             <div class="huanxin-bottom">
-                <span style="font-size:11px;color:rgb(var(--mdui-color-outline));">${escapeHtml(order.shopOrderNumber || '')}</span>
-                <span style="font-size:16px;font-weight:700;color:rgb(var(--mdui-color-primary));">¥${escapeHtml(price)}</span>
+                <span class="huanxin-order-no">${escapeHtml(order.shopOrderNumber || '')}</span>
+                <span class="huanxin-price">¥${escapeHtml(price)}</span>
             </div>
         `;
     }
@@ -2793,6 +2938,7 @@
                     <span class="detail-summary-value">${escapeHtml(goodsModel || '-')}</span>
                 </div>
                 <div class="detail-summary-price">
+                    <span class="detail-summary-price-label">实付</span>
                     <span class="detail-summary-price-value">¥${escapeHtml(price)}</span>
                     <span class="status-badge status-${order.payState}" style="margin-left:auto;">${escapeHtml(statusText)}</span>
                 </div>
@@ -3135,12 +3281,17 @@
 
     async function checkQualification() {
         const mobileField = document.getElementById('buyerMobile');
-        const mobile = mobileField.value;
+        const mobile = mobileField.value.trim();
         const storeKey = getCurrentStoreKey();
         const uiGeneration = state.currentUiGeneration;
         mobileField.setCustomValidity('');
         if (!mobile) {
             mobileField.setCustomValidity('请输入手机号');
+            mobileField.reportValidity();
+            return;
+        }
+        if (!/^1[3-9]\d{9}$/.test(mobile)) {
+            mobileField.setCustomValidity('手机号格式不正确');
             mobileField.reportValidity();
             return;
         }
@@ -3152,32 +3303,13 @@
 
         addLog(`校验买家资格: ${mobile}`, "info");
         const res = await callApi('/salesuser/queryCustomerChannelSubsidyBalance', 'GET', { buyerMobile: mobile }, storeKey);
-        if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey() || mobileField.value !== mobile) return;
-        const chips = document.querySelectorAll('#productCategoryChips mdui-chip');
-
-        chips.forEach(c => {
-            if (!c.dataset.originalText) c.dataset.originalText = c.textContent;
-        });
+        if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey() || mobileField.value.trim() !== mobile) return;
 
         if (res?.code === 0) {
-            addLog(`资格查询成功，返点Code: ${res.data.countrySubsidyCateCodes || '无'}`, "info");
-            const validCodes = (res.data.countrySubsidyCateCodes || "").split(',').map(c => c.trim()).filter(c => c);
-            const cityMap = {};
-            (res.data.cateCodeList || []).forEach(item => {
-                if (item.cityName) cityMap[item.cateCode] = item;
-            });
-            chips.forEach(c => {
-                c.selected = validCodes.includes(c.value);
-                if (cityMap[c.value]) {
-                    const { cityName, mode } = cityMap[c.value];
-                    const city = cityName.slice(0, -1);
-                    const modeText = mode === '0' ? '线上' : '线下';
-                    c.textContent = c.dataset.originalText + '（' + city + modeText + '）';
-                } else {
-                    c.textContent = c.dataset.originalText;
-                }
-            });
-            sortSelectedChipsToTop();
+            // data 可能为 null（未知买家），不能直接取属性，否则 async 处理器抛错、按钮看起来没反应
+            const data = res.data || {};
+            addLog(`资格查询成功，返点Code: ${data.countrySubsidyCateCodes || '无'}`, "info");
+            const validCodes = applyQualificationToChips(data);
 
             if (validCodes.length > 0) {
                 showSnackbar({ message: `查询成功`, closeable: true });
@@ -3185,10 +3317,6 @@
                 showRemindBtn(false);
             } else {
                 showSnackbar({ message: `查询成功，尚未领取品类资格`, closeable: true });
-                chips.forEach(c => {
-                    c.selected = false;
-                    c.textContent = c.dataset.originalText;
-                });
                 showRemindBtn(true);
             }
         } else {
@@ -3196,10 +3324,7 @@
             addLog(`资格查询失败: ${errMsg}`, "error");
             mobileField.setCustomValidity(errMsg);
             mobileField.reportValidity();
-            chips.forEach(c => {
-                c.selected = false;
-                c.textContent = c.dataset.originalText;
-            });
+            resetQualificationChips();
             showRemindBtn(true);
         }
     }
@@ -3220,6 +3345,42 @@
         btn.disabled = false;
     }
 
+    /** 把资格接口返回的品类信息刷到 chips 上，返回命中的品类码 */
+    function applyQualificationToChips(data) {
+        const chips = document.querySelectorAll('#productCategoryChips mdui-chip');
+        chips.forEach(c => {
+            if (!c.dataset.originalText) c.dataset.originalText = c.textContent;
+        });
+        const validCodes = String(data?.countrySubsidyCateCodes || "").split(',').map(c => c.trim()).filter(c => c);
+        const cityMap = {};
+        (data?.cateCodeList || []).forEach(item => {
+            if (item?.cityName) cityMap[item.cateCode] = item;
+        });
+        chips.forEach(c => {
+            c.selected = validCodes.includes(c.value);
+            const info = cityMap[c.value];
+            if (info) {
+                const city = String(info.cityName || '').replace(/市$/, '');
+                const modeText = info.mode === '0' ? '线上' : '线下';
+                c.textContent = `${c.dataset.originalText}（${city}${modeText}）`;
+            } else {
+                c.textContent = c.dataset.originalText;
+            }
+        });
+        sortSelectedChipsToTop();
+        return validCodes;
+    }
+
+    /** 清空 chips 的选中与标注，换手机号或查询失败时调用 */
+    function resetQualificationChips() {
+        document.querySelectorAll('#productCategoryChips mdui-chip').forEach(c => {
+            if (!c.dataset.originalText) c.dataset.originalText = c.textContent;
+            c.selected = false;
+            c.textContent = c.dataset.originalText;
+        });
+        sortSelectedChipsToTop();
+    }
+
     function startRemindPolling() {
         if (state.isRemindPolling) return;
         const mobile = document.getElementById('buyerMobile').value.trim();
@@ -3228,12 +3389,17 @@
         if (!mobile || !state.currentToken) return;
 
         state.isRemindPolling = true;
+        state.remindPollAttempts = 0;
+        state.remindPollInFlight = false;
         const btn = document.getElementById('remindQualificationBtn');
         btn.innerHTML = '<mdui-circular-progress style="width:16px;height:16px;margin-right:4px;"></mdui-circular-progress>轮询中';
         btn.disabled = true;
         addLog(`开始轮询资格核验[${mobile}]`, "info");
 
         state.remindPollTimer = setInterval(async () => {
+            // 上一次请求还没回来就跳过这一拍，避免请求堆积
+            if (state.remindPollInFlight) return;
+
             const currentMobile = document.getElementById('buyerMobile').value.trim();
             if (currentMobile !== mobile) {
                 stopRemindPolling();
@@ -3244,39 +3410,42 @@
                 stopRemindPolling();
                 return;
             }
+            state.remindPollAttempts = Number(state.remindPollAttempts || 0) + 1;
+            if (state.remindPollAttempts > CONSTANTS.REMIND_POLL_MAX_ATTEMPTS) {
+                addLog(`资格核验轮询已达上限(${CONSTANTS.REMIND_POLL_MAX_ATTEMPTS} 次)，停止轮询`, "warn");
+                stopRemindPolling();
+                showSnackbar({ message: "长时间未检测到领券，已停止轮询，可手动重新核验", closeable: true });
+                return;
+            }
 
-            addLog(`轮询资格核验: ${mobile}`, "info");
-            const res = await callApi('/salesuser/queryCustomerChannelSubsidyBalance', 'GET', { buyerMobile: mobile }, storeKey);
-            if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) return;
+            state.remindPollInFlight = true;
+            let res = null;
+            try {
+                addLog(`轮询资格核验: ${mobile}`, "info");
+                res = await callApi('/salesuser/queryCustomerChannelSubsidyBalance', 'GET', { buyerMobile: mobile }, storeKey);
+            } catch (e) {
+                addLog(`资格核验轮询异常: ${e.message}`, "error");
+                return;
+            } finally {
+                state.remindPollInFlight = false;
+            }
+
+            // 响应回来时手机号/门店/轮询状态都可能已经变了，逐项确认后再动 UI
+            if (uiGeneration !== state.currentUiGeneration
+                || storeKey !== getCurrentStoreKey()
+                || !state.isRemindPolling
+                || document.getElementById('buyerMobile').value.trim() !== mobile) return;
 
             if (res?.code === 0) {
-                const validCodes = (res.data.countrySubsidyCateCodes || "").split(',').map(c => c.trim()).filter(c => c);
+                const validCodes = applyQualificationToChips(res.data || {});
                 if (validCodes.length > 0) {
                     addLog(`资格核验轮询成功，已获得品类`, "info");
                     stopRemindPolling();
                     showRemindBtn(false);
-                    const chips = document.querySelectorAll('#productCategoryChips mdui-chip');
-                    const cityMap = {};
-                    (res.data.cateCodeList || []).forEach(item => {
-                        if (item.cityName) cityMap[item.cateCode] = item;
-                    });
-                    chips.forEach(c => {
-                        if (!c.dataset.originalText) c.dataset.originalText = c.textContent;
-                        c.selected = validCodes.includes(c.value);
-                        if (cityMap[c.value]) {
-                            const { cityName, mode } = cityMap[c.value];
-                            const city = cityName.slice(0, -1);
-                            const modeText = mode === '0' ? '线上' : '线下';
-                            c.textContent = c.dataset.originalText + '（' + city + modeText + '）';
-                        } else {
-                            c.textContent = c.dataset.originalText;
-                        }
-                    });
-                    sortSelectedChipsToTop();
                     document.getElementById('remindSuccessDialog').open = true;
                 }
             }
-        }, 1000);
+        }, CONSTANTS.REMIND_POLL_INTERVAL_MS);
     }
 
     function sortSelectedChipsToTop() {
@@ -3326,6 +3495,23 @@
         if (el.value === next) return;
         el.value = next;
         playOneShotAnimation(el, 'field-flash');
+    }
+
+    /**
+     * 自动回填价格字段：只有当前值为空、或仍等于上次自动填入的值时才覆盖，
+     * 避免商品查询的延迟响应顶掉操作员刚手输的价格。force=true 用于清空。
+     * @returns {boolean} 是否真的写入
+     */
+    function setAutoFilledPrice(selector, value, force = false) {
+        const el = document.querySelector(selector);
+        if (!el) return false;
+        const next = String(value ?? '');
+        const current = String(el.value ?? '');
+        const isUntouched = !current.trim() || current === (el.dataset.autoFilled ?? '');
+        if (!force && !isUntouched) return false;
+        setFieldValueAnimated(selector, next);
+        el.dataset.autoFilled = next;
+        return true;
     }
 
     /**
@@ -3394,25 +3580,39 @@
                     addLog(`商品[${code}]未备案或已吊销`, "error");
                     showError(`商品未备案或已吊销`);
                     document.querySelector('#goodsCode').dataset.goodsName = "";
-                    document.querySelector('#filingPrice').value = "";
-                    document.querySelector('#shopPrice').value = "";
+                    setAutoFilledPrice('#filingPrice', "", true);
+                    setAutoFilledPrice('#shopPrice', "", true);
+                    delete document.querySelector('#shopPrice').dataset.autoFilledFor;
+                    clearDerivedPrices();
+                    validateShopPriceAgainstFiling();
                     renderRecentGoodsSelect("");
                     return;
                 }
                 document.querySelector('#goodsCode').dataset.goodsName = res.data.goodsName;
                 saveRecentGoods(code, res.data.goodsName);
-                setFieldValueAnimated('#filingPrice', res.data.subsidyBackPrice);
 
-                const price = parseFloat(res.data.subsidyBackPrice);
-                if (price > 10000) {
-                    const maxFloat = Math.min(price - 10000, 1000);
+                const shopEl = document.querySelector('#shopPrice');
+                // 换了另一个商品（含点选最近记录、商品库导入）时必须重置价格；
+                // 同一商品重复查询则保留操作员手输的门店单价。
+                const isDifferentGoods = shopEl.dataset.autoFilledFor !== code;
+                setAutoFilledPrice('#filingPrice', res.data.subsidyBackPrice, isDifferentGoods);
+
+                const filing = parsePriceInput(res.data.subsidyBackPrice);
+                let suggestedShopPrice = res.data.subsidyBackPrice;
+                if (Number.isFinite(filing) && filing > 10000) {
+                    // 超过一万的商品：门店单价取 1 万加随机零头，且不超过备案价
+                    const maxFloat = Math.floor(Math.min(filing - 10000, 1000));
                     const float = Math.floor(Math.random() * (maxFloat + 1));
-                    setFieldValueAnimated('#shopPrice', formatPrice(10000 + float));
-                } else {
-                    setFieldValueAnimated('#shopPrice', res.data.subsidyBackPrice);
+                    suggestedShopPrice = formatPrice(10000 + float);
                 }
-
-                calcPrice();
+                if (setAutoFilledPrice('#shopPrice', suggestedShopPrice, isDifferentGoods)) {
+                    shopEl.dataset.autoFilledFor = code;
+                    calcPrice();
+                } else {
+                    addLog("门店单价已手动填写，保留手输值不做覆盖", "warn");
+                    validateShopPriceAgainstFiling();
+                    schedulePreviewRender();
+                }
             } else {
                 addLog(`商品[${code}]查询失败`, "error");
                 showError(`商品查询失败: ${res?.msg}`);
@@ -3428,58 +3628,124 @@
     let _calcGuard = false;
     let _pendingGoodsQuery = null;
 
+    function round2(v) {
+        return Math.round((Number(v) + Number.EPSILON) * 100) / 100;
+    }
+
     function formatPrice(v) {
-        const n = Math.round(v * 100) / 100;
+        const n = round2(v);
         return n % 1 === 0 ? n.toFixed(0) : n.toFixed(2);
+    }
+
+    /** 统一价格解析：允许 ¥ ￥ 千分位 空格 与「元」，非法返回 NaN */
+    function parsePriceInput(value) {
+        if (value === null || value === undefined) return NaN;
+        const cleaned = String(value).replace(/[¥￥,，\s元]/g, '');
+        if (!cleaned || !/^-?\d*\.?\d*$/.test(cleaned)) return NaN;
+        const num = Number(cleaned);
+        return Number.isFinite(num) ? num : NaN;
+    }
+
+    function readPriceField(selector) {
+        return parsePriceInput(document.querySelector(selector)?.value);
+    }
+
+    /** 正向公式：门店价 -> 实付价（唯一真源，正反算共用） */
+    function shopPriceToActual(shopPrice) {
+        return shopPrice <= 10000 ? shopPrice * 0.85 : 8500 + (shopPrice - 10000);
+    }
+
+    /**
+     * 反向公式：实付价 -> 门店价。
+     * 同一个实付价可能对应相邻两个门店价（都能四舍五入回同一分），
+     * 因此优先保留当前门店价，其次才取公式值，避免重复输入同一实付时门店价来回漂移 1 分。
+     */
+    function actualToShopPrice(actualPrice, preferredShopPrice = NaN) {
+        const target = round2(actualPrice);
+        if (Number.isFinite(preferredShopPrice) && preferredShopPrice > 0
+            && round2(shopPriceToActual(round2(preferredShopPrice))) === target) {
+            return round2(preferredShopPrice);
+        }
+        const raw = actualPrice <= 8500 ? actualPrice / 0.85 : 10000 + (actualPrice - 8500);
+        const base = round2(raw);
+        for (const candidate of [base, round2(base - 0.01), round2(base + 0.01)]) {
+            if (round2(shopPriceToActual(candidate)) === target) return candidate;
+        }
+        return base;
+    }
+
+    /** 按门店价写回三个字段，保证 实付 + 补贴 === 门店价（分币级一致） */
+    function applyPriceTriple(shopPrice) {
+        const shop = round2(shopPrice);
+        const actual = round2(shopPriceToActual(shop));
+        const subsidy = round2(shop - actual);
+        _calcGuard = true;
+        try {
+            setFieldValueAnimated('#shopPrice', formatPrice(shop));
+            setFieldValueAnimated('#actualPrice', formatPrice(actual));
+            setFieldValueAnimated('#subsidyPrice', formatPrice(subsidy));
+        } finally {
+            _calcGuard = false;
+        }
+        schedulePreviewRender();
+    }
+
+    function clearDerivedPrices() {
+        _calcGuard = true;
+        try {
+            setFieldValueAnimated('#actualPrice', '');
+            setFieldValueAnimated('#subsidyPrice', '');
+        } finally {
+            _calcGuard = false;
+        }
+        schedulePreviewRender();
+    }
+
+    /**
+     * 门店单价不得高于备案价。这里不再静默夹取，而是红框标注 + 校验信息，
+     * 让操作员自己决定改哪个价（提交前的校验仍会拦截）。
+     */
+    function validateShopPriceAgainstFiling() {
+        const shopEl = document.querySelector('#shopPrice');
+        if (!shopEl) return false;
+        const shopPrice = readPriceField('#shopPrice');
+        const filingPrice = readPriceField('#filingPrice');
+        const over = Number.isFinite(shopPrice) && Number.isFinite(filingPrice)
+            && filingPrice > 0 && round2(shopPrice) > round2(filingPrice);
+
+        shopEl.classList.toggle('field-over-limit', over);
+        // setCustomValidity 交给 mdui 渲染红色提示文案，红色边框由 .field-over-limit 负责
+        shopEl.setCustomValidity(over ? `门店单价不得高于备案价 ${formatPrice(filingPrice)}` : '');
+        return over;
     }
 
     function calcPrice() {
         if (_calcGuard) return;
-        let shopPrice = parseFloat(document.querySelector('#shopPrice').value);
-        if (isNaN(shopPrice)) return;
-
-        const filingPrice = parseFloat(document.querySelector('#filingPrice').value);
-        if (!isNaN(filingPrice) && filingPrice > 0 && shopPrice > filingPrice) {
-            shopPrice = filingPrice;
-            setFieldValueAnimated('#shopPrice', formatPrice(shopPrice));
+        const shopPrice = readPriceField('#shopPrice');
+        if (!Number.isFinite(shopPrice) || shopPrice <= 0) {
+            clearDerivedPrices();
+            validateShopPriceAgainstFiling();
+            return;
         }
-
-        let actualPrice;
-        if (shopPrice <= 10000) {
-            actualPrice = shopPrice * 0.85;
-        } else {
-            actualPrice = 8500 + (shopPrice - 10000);
-        }
-
-        _calcGuard = true;
-        setFieldValueAnimated('#actualPrice', formatPrice(actualPrice));
-        setFieldValueAnimated('#subsidyPrice', formatPrice(shopPrice - actualPrice));
-        _calcGuard = false;
-        schedulePreviewRender();
+        applyPriceTriple(shopPrice);
+        validateShopPriceAgainstFiling();
     }
 
     function reverseCalcPrice() {
         if (_calcGuard) return;
-        const actualPrice = parseFloat(document.querySelector('#actualPrice').value);
-        if (isNaN(actualPrice)) return;
-
-        let shopPrice;
-        if (actualPrice <= 8500) {
-            shopPrice = actualPrice / 0.85;
-        } else {
-            shopPrice = 10000 + (actualPrice - 8500);
+        const actualPrice = readPriceField('#actualPrice');
+        if (!Number.isFinite(actualPrice) || actualPrice <= 0) {
+            _calcGuard = true;
+            try {
+                setFieldValueAnimated('#subsidyPrice', '');
+            } finally {
+                _calcGuard = false;
+            }
+            schedulePreviewRender();
+            return;
         }
-
-        const filingPrice = parseFloat(document.querySelector('#filingPrice').value);
-        if (!isNaN(filingPrice) && filingPrice > 0 && shopPrice > filingPrice) {
-            shopPrice = filingPrice;
-        }
-
-        _calcGuard = true;
-        setFieldValueAnimated('#shopPrice', formatPrice(shopPrice));
-        setFieldValueAnimated('#subsidyPrice', formatPrice(shopPrice - actualPrice));
-        _calcGuard = false;
-        schedulePreviewRender();
+        applyPriceTriple(actualToShopPrice(actualPrice, readPriceField('#shopPrice')));
+        validateShopPriceAgainstFiling();
     }
 
     let _previewRafId = null;
@@ -3597,58 +3863,114 @@
                 <span class="receipt-total-label">实付合计</span>
                 <span class="receipt-total-value" data-receipt-key="total">${escapeHtml(formatReceiptMoney(fd.actualPrice) || '¥0.00')}</span>
             </div>
-            <div class="receipt-foot">— 预览内容以实际提交结果为准 —</div>
         `;
 
         animateChangedReceiptValues(container, prevValues);
     }
 
-    async function generateNextOrderNumber() {
-        const tradeMonth = getDefaultTradeMonth();
-        const storeKeys = state.storePayloads
-            .map((store, index) => getStoreKey(store, index))
-            .filter(storeKey => !!getStoreByKey(storeKey)?.payload?.trim());
-        const storeResults = await mapWithConcurrency(storeKeys, 2, async storeKey => {
-            const orders = [];
-            let pageNumber = 1;
-            let total = null;
-            while (pageNumber <= CONSTANTS.ORDER_QUERY_MAX_PAGES) {
-                const res = await callApi('/salesuser/getShopOrderList', 'GET', {
-                    tradeMonth,
-                    inputStr: "",
-                    pageNumber: String(pageNumber)
-                }, storeKey);
-                if (!(res?.code === 0 && Array.isArray(res.data))) {
-                    throw new Error(`门店[${getStoreContext(storeKey).storeName}]订单单号查询失败`);
-                }
-                orders.push(...res.data);
-                total = res.count != null ? Number(res.count) : total;
-                if (!res.data.length || (total != null && orders.length >= total)) break;
-                pageNumber += 1;
-                await new Promise(resolve => setTimeout(resolve, 80));
-            }
-            if (pageNumber > CONSTANTS.ORDER_QUERY_MAX_PAGES) {
-                throw new Error(`门店[${getStoreContext(storeKey).storeName}]订单分页超过安全上限`);
-            }
-            return orders;
-        });
+    /** 把 "XS0042" 递增成 "XS0043"，保持前缀与补零宽度 */
+    function incrementOrderNumber(orderNumber) {
+        const match = String(orderNumber || '').trim().match(/^(.*?)(\d+)$/);
+        if (!match) return String(orderNumber || '');
+        const [, prefix, digits] = match;
+        return `${prefix}${String(Number(digits) + 1).padStart(digits.length, '0')}`;
+    }
 
-        const patterns = storeResults.flat().map(order => String(order?.shopOrderNumber || '').trim())
+    function getPreviousTradeMonth(tradeMonth) {
+        const match = String(tradeMonth || '').match(/^(\d{4})-(\d{1,2})$/);
+        if (!match) return "";
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const date = new Date(year, month - 1, 1);
+        date.setMonth(date.getMonth() - 1);
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    /** 拉取指定门店某个月的全部订单；失败抛错由调用方决定是否容忍 */
+    async function fetchStoreOrdersForMonth(storeKey, tradeMonth) {
+        const orders = [];
+        let pageNumber = 1;
+        let total = null;
+        let lastPageFull = false;
+        while (pageNumber <= CONSTANTS.ORDER_QUERY_MAX_PAGES) {
+            const res = await callApi('/salesuser/getShopOrderList', 'GET', {
+                tradeMonth,
+                inputStr: "",
+                pageNumber: String(pageNumber)
+            }, storeKey);
+            if (!(res?.code === 0 && Array.isArray(res.data))) {
+                throw new Error(`门店[${getStoreContext(storeKey).storeName}]订单单号查询失败`);
+            }
+            orders.push(...res.data);
+            total = res.count != null ? Number(res.count) : total;
+            lastPageFull = res.data.length > 0;
+            if (!res.data.length || (total != null && orders.length >= total)) return orders;
+            pageNumber += 1;
+            await new Promise(resolve => setTimeout(resolve, 80));
+        }
+        // 只有最后一页仍是满的才说明确实没读完
+        if (lastPageFull) {
+            throw new Error(`门店[${getStoreContext(storeKey).storeName}]订单分页超过安全上限，请改用手动单号`);
+        }
+        return orders;
+    }
+
+    function collectOrderNumberPatterns(orders) {
+        return orders.map(order => String(order?.shopOrderNumber || '').trim())
             .map(value => {
                 const match = value.match(/^(.*?)(\d+)$/);
                 return match ? { value, prefix: match[1], digits: match[2], number: Number(match[2]) } : null;
             })
             .filter(item => item && Number.isSafeInteger(item.number));
-        if (!patterns.length) return "1";
+    }
+
+    /**
+     * 按全门店历史单号推算下一个单号。
+     * - 当月没有订单时回退到上一个月，避免月初退化成裸 "1"
+     * - 提交门店必须查询成功，其他门店失败只记日志不阻断
+     */
+    async function generateNextOrderNumber(submitStoreKey = getCurrentStoreKey()) {
+        const storeKeys = state.storePayloads
+            .map((store, index) => getStoreKey(store, index))
+            .filter(storeKey => !!getStoreByKey(storeKey)?.payload?.trim());
+
+        const collectPatterns = async (tradeMonth) => {
+            const storeResults = await mapWithConcurrency(storeKeys, 2, async storeKey => {
+                try {
+                    return await fetchStoreOrdersForMonth(storeKey, tradeMonth);
+                } catch (e) {
+                    if (storeKey === submitStoreKey) throw e;
+                    addLog(`跳过门店[${getStoreContext(storeKey).storeName}]单号查询: ${e.message}`, "warn");
+                    return [];
+                }
+            });
+            return collectOrderNumberPatterns(storeResults.flat());
+        };
+
+        const currentMonth = getDefaultTradeMonth();
+        let tradeMonth = currentMonth;
+        let patterns = await collectPatterns(tradeMonth);
+        if (!patterns.length) {
+            const previousMonth = getPreviousTradeMonth(currentMonth);
+            if (previousMonth) {
+                addLog(`${currentMonth} 无历史单号，回退查询 ${previousMonth}`, "warn");
+                tradeMonth = previousMonth;
+                patterns = await collectPatterns(tradeMonth);
+            }
+        }
+        if (!patterns.length) {
+            throw new Error("未查询到历史销售单号，无法推算，请取消“自动单号”并手动填写");
+        }
 
         const prefixes = new Set(patterns.map(item => item.prefix));
         if (prefixes.size !== 1) {
-            throw new Error("历史销售单号存在多个前缀格式，请改用手动单号");
+            throw new Error(`历史销售单号存在多个前缀格式（${[...prefixes].map(p => p || '空').join(' / ')}），请改用手动单号`);
         }
         const maxItem = patterns.reduce((max, item) => item.number > max.number ? item : max);
-        const nextDigits = String(maxItem.number + 1).padStart(maxItem.digits.length, '0');
-        const nextNumber = `${maxItem.prefix}${nextDigits}`;
-        addLog(`全门店销售单号最大值为 ${maxItem.value}，下一单号为 ${nextNumber}`, "info");
+        // 补零宽度取历史最宽的，避免 0009 与 10 混存时把 4 位约定丢掉
+        const width = Math.max(...patterns.map(item => item.digits.length));
+        const nextNumber = `${maxItem.prefix}${String(maxItem.number + 1).padStart(width, '0')}`;
+        addLog(`${tradeMonth} 全门店销售单号最大值为 ${maxItem.value}，下一单号为 ${nextNumber}`, "info");
         return nextNumber;
     }
 
@@ -3677,11 +3999,8 @@
         }
 
         addLog("开始收集表单并提交订单...", "info");
-        const mobile = document.querySelector('#buyerMobile').value;
-        const goodsCode = document.querySelector('#goodsCode').value;
-        const shopPrice = document.querySelector('#shopPrice').value;
-        const actual = document.querySelector('#actualPrice').value;
-        const subsidy = document.querySelector('#subsidyPrice').value;
+        const mobile = document.querySelector('#buyerMobile').value.trim();
+        const goodsCode = document.querySelector('#goodsCode').value.trim();
         const detailAddr = document.querySelector('#detailAddress').value;
         const city = els.city.value;
         const district = els.district.value;
@@ -3689,18 +4008,42 @@
 
         const actualGoodsName = document.querySelector('#goodsCode').dataset.goodsName || "";
 
-        if (!mobile || !goodsCode || !shopPrice || !city || !district || !townCode || !actualGoodsName) {
+        if (!mobile || !goodsCode || !city || !district || !townCode || !actualGoodsName) {
             return showError("请填写完整订单信息（注意确认商品查询成功及乡镇地址）");
         }
+        if (!/^1[3-9]\d{9}$/.test(mobile)) {
+            return showError("手机号格式不正确");
+        }
 
-        let shopOrderNum = document.querySelector('#shopOrderNumber').value;
-        if (document.querySelector('#autoOrderNumCheckbox').checked) {
+        // 三个金额必须都有效，且 实付 + 补贴 === 门店价，避免清空某一项后提交出 0 元或负补贴订单
+        const shopPriceNum = readPriceField('#shopPrice');
+        const actualNum = readPriceField('#actualPrice');
+        const subsidyNum = readPriceField('#subsidyPrice');
+        const filingNum = readPriceField('#filingPrice');
+        if (![shopPriceNum, actualNum, subsidyNum].every(v => Number.isFinite(v) && v >= 0) || shopPriceNum <= 0 || actualNum <= 0) {
+            return showError("价格填写不完整或格式有误，请重新确认门店单价与实付单价");
+        }
+        if (round2(actualNum + subsidyNum) !== round2(shopPriceNum)) {
+            return showError(`金额不一致：实付 ${formatPrice(actualNum)} + 补贴 ${formatPrice(subsidyNum)} ≠ 门店单价 ${formatPrice(shopPriceNum)}，请重新计算`);
+        }
+        if (!Number.isFinite(filingNum) || filingNum <= 0) {
+            return showError("备案价缺失，请重新查询商品信息");
+        }
+        if (round2(shopPriceNum) > round2(filingNum)) {
+            return showError(`门店单价 ${formatPrice(shopPriceNum)} 高于备案价 ${formatPrice(filingNum)}，请修正`);
+        }
+
+        const useAutoOrderNumber = document.querySelector('#autoOrderNumCheckbox').checked;
+        let shopOrderNum = document.querySelector('#shopOrderNumber').value.trim();
+        if (useAutoOrderNumber) {
             try {
                 showSnackbar({ message: "正在获取最新单号..." });
-                shopOrderNum = await generateNextOrderNumber();
+                shopOrderNum = await generateNextOrderNumber(submitStoreKey);
             } catch (e) {
-                return showError("自动获取单号失败");
+                return showError(e?.message || "自动获取单号失败");
             }
+        } else if (!shopOrderNum) {
+            return showError("请填写销售单号，或勾选“自动单号”");
         }
 
         if (submitUiGeneration !== state.currentUiGeneration || submitStoreKey !== getCurrentStoreKey()) {
@@ -3722,16 +4065,16 @@
         const payload = {
             shopOrderNumber: shopOrderNum,
             buyerMobile: mobile,
-            shopActualPayPrice: parseFloat(actual || 0).toFixed(2),
-            shopOriginalPrice: parseFloat(shopPrice).toFixed(2),
-            subsidyTotalAmount: parseFloat(subsidy || 0).toFixed(2),
+            shopActualPayPrice: round2(actualNum).toFixed(2),
+            shopOriginalPrice: round2(shopPriceNum).toFixed(2),
+            subsidyTotalAmount: round2(subsidyNum).toFixed(2),
             goodsVoList: [{
                 goodsCode,
                 goodsName: actualGoodsName,
                 goodsCount: 1,
-                shopGoodsActualPayPrice: parseFloat(actual || 0),
-                shopGoodsOriginalPrice: parseFloat(shopPrice),
-                subsidyAmount: parseFloat(subsidy || 0),
+                shopGoodsActualPayPrice: round2(actualNum),
+                shopGoodsOriginalPrice: round2(shopPriceNum),
+                subsidyAmount: round2(subsidyNum),
                 uniscid: ""
             }],
             buyerName,
@@ -3740,16 +4083,18 @@
             townCode
         };
 
-        addLog(`订单详情: [${shopOrderNum}] 实付:${actual} 买家:${mobile} 地址:${addressStr.slice(0, 10)}...`, "info");
+        addLog(`订单详情: [${shopOrderNum}] 实付:${formatPrice(actualNum)} 买家:${mobile} 地址:${addressStr.slice(0, 10)}...`, "info");
         let res = await callApi('/salesuser/addOrder', 'POST', payload, submitStoreKey);
         const conflictMessage = String(res?.msg || '');
-        if (res?.code !== 0 && document.querySelector('#autoOrderNumCheckbox').checked && /已存在|重复|占用|duplicate/i.test(conflictMessage)) {
-            addLog("销售单号冲突，重新查询后重试一次", "warn");
-            payload.shopOrderNumber = await generateNextOrderNumber();
+        if (res?.code !== 0 && useAutoOrderNumber && /已存在|重复|占用|duplicate/i.test(conflictMessage)) {
+            // 单号冲突时本地递增，重新查询只会拿到同一个值
+            const retryNumber = incrementOrderNumber(payload.shopOrderNumber);
+            addLog(`销售单号[${payload.shopOrderNumber}]冲突，改用 ${retryNumber} 重试一次`, "warn");
+            payload.shopOrderNumber = retryNumber;
             res = await callApi('/salesuser/addOrder', 'POST', payload, submitStoreKey);
         }
         if (res?.code === 0) {
-            addLog(`下单成功: 建行单号为 ${res.data}`, "info");
+            addLog(`下单成功: 销售单号 ${payload.shopOrderNumber}，建行单号 ${res.data}`, "info");
             showSnackbar({ message: "订单提交成功！" });
             if (res.data) {
                 const orderContext = {
@@ -3772,6 +4117,10 @@
                 checkNowAndEnsurePolling("submitOrder");
             }
 
+        } else if (res === null || res === undefined) {
+            // 超时/网络中断：服务端可能已建单，重复提交会产生两张订单
+            addLog(`提交订单无响应（可能超时），单号 ${payload.shopOrderNumber}`, "error");
+            showError(`提交无响应，服务端可能已受理。请先到订单列表按单号 ${payload.shopOrderNumber} 确认，再决定是否重新提交`);
         } else {
             addLog(`提交订单失败: ${res?.msg}`, "error");
             showError(res?.msg || "提交失败");
@@ -4680,11 +5029,24 @@
             this.setCustomValidity('');
             stopRemindPolling();
             showRemindBtn(false);
+            // 换号后必须清掉上一位买家的资格，否则屏幕上还是旧结果
+            resetQualificationChips();
         });
         document.getElementById('chipExpandBtn').addEventListener('click', toggleChipExpand);
+        // mdui-switch 不是原生可标注控件，label 不会自动联动，这里手动转发点击
+        document.querySelectorAll('.switch-row').forEach(row => {
+            row.addEventListener('click', (e) => {
+                const sw = row.querySelector('mdui-switch');
+                if (!sw || e.target === sw || sw.contains(e.target)) return;
+                sw.checked = !sw.checked;
+                sw.dispatchEvent(new Event('change', { bubbles: true }));
+            });
+        });
         document.getElementById('autoOrderNumCheckbox').addEventListener('change', () => toggleOrderInput());
         document.getElementById('goodsCode').addEventListener('blur', queryGoodsInfo);
         document.getElementById('shopPrice').addEventListener('change', calcPrice);
+        // 输入过程中就给出超备案价的红框提示，不等失焦
+        document.getElementById('shopPrice').addEventListener('input', validateShopPriceAgainstFiling);
         document.getElementById('actualPrice').addEventListener('change', reverseCalcPrice);
         document.getElementById('submitOrderBtn').addEventListener('click', submitOrder);
         document.getElementById('saveDraftFabBtn').addEventListener('click', saveCurrentAsDraft);
@@ -4851,7 +5213,22 @@
         });
     }
 
+    /** 兜底捕获未处理的异步异常，避免出现“按钮点了没反应也没日志”的情况 */
+    function bindGlobalErrorHandlers() {
+        window.addEventListener('unhandledrejection', (e) => {
+            const reason = e?.reason;
+            const msg = reason?.message || String(reason || '未知错误');
+            addLog(`未处理的异步异常: ${msg}`, "error");
+            console.error('[unhandledrejection]', reason);
+        });
+        window.addEventListener('error', (e) => {
+            if (!e?.message) return;
+            addLog(`脚本异常: ${e.message} @ ${e.filename || ''}:${e.lineno || 0}`, "error");
+        });
+    }
+
     function init() {
+        bindGlobalErrorHandlers();
         initElements();
         initializeStorePayloads();
         loadOrderQueue();
