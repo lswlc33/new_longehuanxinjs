@@ -530,7 +530,6 @@
             shopPrice: document.querySelector('#shopPrice').value,
             actualPrice: document.querySelector('#actualPrice').value,
             subsidyPrice: document.querySelector('#subsidyPrice').value,
-            sncode: document.querySelector('#sncode').value,
             autoOrderNum: document.querySelector('#autoOrderNumCheckbox').checked,
             shopOrderNumber: document.querySelector('#shopOrderNumber').value
         };
@@ -650,15 +649,12 @@
         document.querySelector('#subsidyPrice').value = fd.subsidyPrice || '';
         await new Promise(r => setTimeout(r, 100));
 
-        document.querySelector('#sncode').value = fd.sncode || '';
-        await new Promise(r => setTimeout(r, 150));
-
         document.querySelector('#autoOrderNumCheckbox').checked = fd.autoOrderNum !== false;
-        toggleOrderInput();
+        toggleOrderInput(fd.shopOrderNumber);
 
         state.currentDraftId = draftId;
-        renderDraftBar();
         updateDraftBadge();
+        schedulePreviewRender();
         addLog(`已加载暂存: ${draft.label}`, "info");
         return true;
     }
@@ -682,35 +678,12 @@
         }
     }
 
-    function renderDraftBar() {
-        const bar = document.getElementById('draftBar');
-        if (!bar) return;
-
-        const drafts = getCurrentStoreDrafts();
-        const count = drafts.length;
-
-        bar.innerHTML = `
-            <div class="draft-bar-left">
-                <mdui-icon name="bookmark_border" style="font-size:18px; opacity: ${count > 0 ? '1' : '0.5'};"></mdui-icon>
-                <span style="opacity: ${count > 0 ? '1' : '0.6'};">暂存列表${count > 0 ? ` (${count})` : ''}</span>
-            </div>
-            <div class="draft-bar-actions">
-                <mdui-button variant="text" size="small" id="draftSaveNewBtn">暂存</mdui-button>
-                <mdui-button variant="text" size="small" id="draftExpandBtn">查看</mdui-button>
-            </div>
-        `;
-        document.getElementById('draftSaveNewBtn')?.addEventListener('click', saveCurrentAsDraft);
-        document.getElementById('draftExpandBtn')?.addEventListener('click', openDraftDrawer);
-        bar.style.display = 'flex';
-    }
-
     function saveCurrentAsDraft() {
         if (!isFormHasContent()) {
             return showSnackbar({ message: "表单为空，请先填写内容" });
         }
         const draft = createDraft();
         showSnackbar({ message: `已暂存: ${draft.label}` });
-        renderDraftBar();
         updateDraftBadge();
     }
 
@@ -719,8 +692,8 @@
         if (!badge) return;
         const count = getCurrentStoreDrafts().length;
         if (count > 0) {
-            badge.textContent = count > 9 ? '9+' : count;
             badge.style.display = '';
+            setTextAnimated(badge, count > 9 ? '9+' : String(count), 'value-pop');
         } else {
             badge.style.display = 'none';
         }
@@ -731,8 +704,8 @@
         if (!badge) return;
         const count = getAllQueuedOrders().length;
         if (count > 0) {
-            badge.textContent = count > 9 ? '9+' : count;
             badge.style.display = '';
+            setTextAnimated(badge, count > 9 ? '9+' : String(count), 'value-pop');
         } else {
             badge.style.display = 'none';
         }
@@ -804,7 +777,6 @@
     function handleDraftDelete(draftId) {
         deleteDraft(draftId);
         renderDraftDrawerList();
-        renderDraftBar();
         updateDraftBadge();
         showSnackbar({ message: "已删除暂存" });
     }
@@ -1519,24 +1491,32 @@
 
         stores.forEach((store, index) => {
             const item = document.createElement('div');
-            item.className = `payload-item ${index === selectedIndex ? 'active' : ''}`;
+            item.className = `store-item ${index === selectedIndex ? 'active' : ''}`;
+
+            const hasPayload = !!(store.payload && store.payload.trim());
+            const stateTag = !hasPayload
+                ? '<span class="store-tag store-tag--empty">待填写</span>'
+                : store.verified
+                    ? '<span class="store-tag store-tag--ok">已验证</span>'
+                    : '<span class="store-tag store-tag--warn">未验证</span>';
 
             item.innerHTML = `
-                <div class="payload-item-header">
-                    <mdui-radio
-                        name="store-payload-radio"
-                        value="${index}"
-                        ${index === selectedIndex ? 'checked' : ''}
-                        style="flex: 1; font-size: 14px; font-weight: 600; color: rgb(var(--mdui-color-primary));"
-                    >
-                        ${`门店 ${index + 1}`}
-                    </mdui-radio>
-                    <div class="payload-item-actions">
-                        <mdui-tooltip content="验证">
+                <div class="store-item-head" data-store-index="${index}">
+                    <mdui-radio name="store-payload-radio" value="${index}" ${index === selectedIndex ? 'checked' : ''}></mdui-radio>
+                    <div class="store-item-heading">
+                        <span class="store-item-name">${escapeHtml(getStoreDisplayName(store, index))}</span>
+                        <span class="store-item-meta">
+                            <span>门店 ${index + 1}</span>
+                            ${index === selectedIndex ? '<span class="store-tag store-tag--current">当前</span>' : ''}
+                            ${stateTag}
+                        </span>
+                    </div>
+                    <div class="store-item-actions">
+                        <mdui-tooltip content="验证并获取门店名称">
                             <mdui-button-icon icon="verified" class="validate-payload-btn" data-index="${index}"></mdui-button-icon>
                         </mdui-tooltip>
-                        <mdui-tooltip content="删除">
-                            <mdui-button-icon icon="delete" class="remove-payload-btn" data-index="${index}" style="color: rgb(var(--mdui-color-error));" ${stores.length <= 1 ? 'disabled' : ''}></mdui-button-icon>
+                        <mdui-tooltip content="删除该门店">
+                            <mdui-button-icon icon="delete_outline" class="remove-payload-btn" data-index="${index}" style="color: rgb(var(--mdui-color-error));" ${stores.length <= 1 ? 'disabled' : ''}></mdui-button-icon>
                         </mdui-tooltip>
                     </div>
                 </div>
@@ -1544,7 +1524,6 @@
                     class="payload-input"
                     data-payload-index="${index}"
                     label="Login Payload (Code)"
-                    helper="${escapeHtml(`${getStoreDisplayName(store, index)} · ${store.verified ? '已验证' : '未验证'}`)}"
                     variant="outlined"
                     type="password"
                     toggle-password
@@ -1666,7 +1645,8 @@
 
     function updateShopNameDisplay() {
         const currentStore = state.storePayloads[state.currentStoreIndex];
-        els.shopName.innerText = currentStore ? getStoreDisplayName(currentStore, state.currentStoreIndex) : "未获取门店信息";
+        setTextAnimated(els.shopName, currentStore ? getStoreDisplayName(currentStore, state.currentStoreIndex) : "未获取门店信息");
+        schedulePreviewRender();
     }
 
     function openShopMenu() {
@@ -1681,7 +1661,6 @@
         stopRemindPolling();
         ProductSearch.resetCache();
         setCurrentStoreIndex(index, true);
-        renderDraftBar();
         updateDraftBadge();
         showSnackbar({ message: `正在切换到 ${getStoreDisplayName(state.storePayloads[index], index)}` });
     }
@@ -2109,13 +2088,14 @@
                 addLog(`获取到 uniscid: ${uniscid}`, "info");
             }
             if (shopName) {
-                els.shopName.innerText = shopName;
+                setTextAnimated(els.shopName, shopName);
                 if (state.storePayloads[state.currentStoreIndex]) {
                     state.storePayloads[state.currentStoreIndex].shopName = shopName;
                     state.storePayloads[state.currentStoreIndex].name = shopName;
                     state.storePayloads[state.currentStoreIndex].verified = true;
                     persistStorePayloads();
                     renderShopSwitchMenu();
+                    schedulePreviewRender();
                 }
             }
         } else {
@@ -2126,10 +2106,10 @@
 
     function updateStatus(active, text = "") {
         if (active) {
-            els.statusBadge.innerText = "已连接";
+            setTextAnimated(els.statusBadge, "已连接");
             els.statusBadge.classList.add('active');
         } else {
-            els.statusBadge.innerText = text || "未连接";
+            setTextAnimated(els.statusBadge, text || "未连接");
             els.statusBadge.classList.remove('active');
         }
         updateShopNameDisplay();
@@ -2246,12 +2226,15 @@
         if (selectedValue) {
             setTimeout(() => {
                 selectElement.value = selectedValue;
+                schedulePreviewRender();
                 setTimeout(() => {
                     if (selectElement.value !== selectedValue) selectElement.value = selectedValue;
+                    schedulePreviewRender();
                 }, 150);
             }, 50);
         } else {
             selectElement.value = "";
+            schedulePreviewRender();
         }
     }
 
@@ -2320,11 +2303,15 @@
         ).join('');
     }
 
-    function toggleOrderInput() {
+    function toggleOrderInput(manualValue) {
         const cb = document.querySelector('#autoOrderNumCheckbox');
         const input = document.querySelector('#shopOrderNumber');
-        input.disabled = cb.checked;
-        input.value = cb.checked ? "提交时自动生成" : "";
+        const wrap = document.querySelector('#shopOrderNumberWrap');
+        const auto = cb.checked;
+        input.disabled = auto;
+        input.value = auto ? "" : (typeof manualValue === 'string' ? manualValue : "");
+        animateCollapse(wrap, !auto, 'is-collapsed');
+        schedulePreviewRender();
     }
 
     function openOrderDrawer() {
@@ -2920,10 +2907,10 @@
 
         const goodsCode = product.goodsCode || order.goodsCode || "";
         if (goodsCode) {
-            document.querySelector('#goodsCode').value = goodsCode;
+            setFieldValueAnimated('#goodsCode', goodsCode);
             await queryGoodsInfo();
             if (order.shopOriginalPrice) {
-                document.querySelector('#shopPrice').value = order.shopOriginalPrice;
+                setFieldValueAnimated('#shopPrice', order.shopOriginalPrice);
                 calcPrice();
             }
         }
@@ -3146,23 +3133,6 @@
         }
     }
 
-    async function checkSncode() {
-        const sncode = document.querySelector('#sncode').value;
-        if (!sncode) return showError("请输入sn码");
-        if (!state.currentToken) return showError("系统未就绪");
-
-        addLog(`查询SN码: ${sncode}`, "info");
-        const res = await callApi('/salesuser/querySnState', 'GET', { snCode: sncode });
-
-        if (res?.code === 0) {
-            addLog(`SN查询结果: ${res?.data.saleState}`, "info");
-            showError(res?.data.saleState + " " + res?.data.detail);
-        } else {
-            addLog(`SN查询异常: ${res?.msg}`, "error");
-            showError(res?.msg || "查询无响应");
-        }
-    }
-
     async function checkQualification() {
         const mobileField = document.getElementById('buyerMobile');
         const mobile = mobileField.value;
@@ -3319,17 +3289,89 @@
         unselected.forEach(c => container.appendChild(c));
     }
 
+    const CHIP_COLLAPSED_HEIGHT = 35;
+    const _collapseFinishers = new WeakMap();
+
+    function prefersReducedMotion() {
+        return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    }
+
+    /** 重播一次性动画：先摘类名并强制回流，避免连续变化时动画不触发 */
+    function playOneShotAnimation(el, animationClass) {
+        if (!el || prefersReducedMotion()) return;
+        el.classList.remove(animationClass);
+        void el.offsetWidth;
+        el.classList.add(animationClass);
+        el.addEventListener('animationend', function onEnd(e) {
+            if (e.target !== el) return;
+            el.removeEventListener('animationend', onEnd);
+            el.classList.remove(animationClass);
+        });
+    }
+
+    /** 文本变化时才改写并播放动画，内容没变不打扰 */
+    function setTextAnimated(el, text, animationClass = 'text-swap') {
+        if (!el) return;
+        const next = String(text ?? '');
+        if (el.textContent === next) return;
+        el.textContent = next;
+        playOneShotAnimation(el, animationClass);
+    }
+
+    /** 程序自动回填的输入框：值变化时高亮一下，提示这不是用户自己敲的 */
+    function setFieldValueAnimated(selector, value) {
+        const el = document.querySelector(selector);
+        if (!el) return;
+        const next = String(value ?? '');
+        if (el.value === next) return;
+        el.value = next;
+        playOneShotAnimation(el, 'field-flash');
+    }
+
+    /**
+     * 折叠/展开高度过渡：先量当前高度作为起点，切换类名后量目标高度，
+     * 用内联 max-height 驱动 CSS transition，结束后交还给类名控制。
+     */
+    function animateCollapse(el, expanded, collapsedClass, collapsedHeight = 0) {
+        if (!el) return;
+
+        const pending = _collapseFinishers.get(el);
+        if (pending) pending();
+
+        const startHeight = el.getBoundingClientRect().height;
+        el.classList.toggle(collapsedClass, !expanded);
+        const endHeight = expanded ? el.scrollHeight : collapsedHeight;
+
+        if (startHeight === endHeight || prefersReducedMotion()) {
+            el.style.maxHeight = '';
+            return;
+        }
+
+        el.style.maxHeight = `${startHeight}px`;
+        void el.offsetHeight;
+        el.style.maxHeight = `${endHeight}px`;
+
+        const finish = () => {
+            clearTimeout(timer);
+            el.removeEventListener('transitionend', onTransitionEnd);
+            _collapseFinishers.delete(el);
+            el.style.maxHeight = '';
+        };
+        const onTransitionEnd = (e) => {
+            if (e.target === el && e.propertyName === 'max-height') finish();
+        };
+        const timer = setTimeout(finish, 600);
+
+        el.addEventListener('transitionend', onTransitionEnd);
+        _collapseFinishers.set(el, finish);
+    }
+
     function toggleChipExpand() {
         const container = document.getElementById('productCategoryChips');
         const btn = document.getElementById('chipExpandBtn');
-        const isCollapsed = container.classList.contains('collapsed');
-        if (isCollapsed) {
-            container.classList.remove('collapsed');
-            btn.innerText = '收起';
-        } else {
-            container.classList.add('collapsed');
-            btn.innerText = '展开全部';
-        }
+        const expand = container.classList.contains('collapsed');
+        animateCollapse(container, expand, 'collapsed', CHIP_COLLAPSED_HEIGHT);
+        btn.innerText = expand ? '收起' : '展开全部';
     }
 
     async function queryGoodsInfo() {
@@ -3359,15 +3401,15 @@
                 }
                 document.querySelector('#goodsCode').dataset.goodsName = res.data.goodsName;
                 saveRecentGoods(code, res.data.goodsName);
-                document.querySelector('#filingPrice').value = res.data.subsidyBackPrice;
+                setFieldValueAnimated('#filingPrice', res.data.subsidyBackPrice);
 
                 const price = parseFloat(res.data.subsidyBackPrice);
                 if (price > 10000) {
                     const maxFloat = Math.min(price - 10000, 1000);
                     const float = Math.floor(Math.random() * (maxFloat + 1));
-                    document.querySelector('#shopPrice').value = formatPrice(10000 + float);
+                    setFieldValueAnimated('#shopPrice', formatPrice(10000 + float));
                 } else {
-                    document.querySelector('#shopPrice').value = res.data.subsidyBackPrice;
+                    setFieldValueAnimated('#shopPrice', res.data.subsidyBackPrice);
                 }
 
                 calcPrice();
@@ -3379,6 +3421,7 @@
             }
         } finally {
             if (_pendingGoodsQuery === pendingQuery) _pendingGoodsQuery = null;
+            schedulePreviewRender();
         }
     }
 
@@ -3398,7 +3441,7 @@
         const filingPrice = parseFloat(document.querySelector('#filingPrice').value);
         if (!isNaN(filingPrice) && filingPrice > 0 && shopPrice > filingPrice) {
             shopPrice = filingPrice;
-            document.querySelector('#shopPrice').value = formatPrice(shopPrice);
+            setFieldValueAnimated('#shopPrice', formatPrice(shopPrice));
         }
 
         let actualPrice;
@@ -3409,9 +3452,10 @@
         }
 
         _calcGuard = true;
-        document.querySelector('#actualPrice').value = formatPrice(actualPrice);
-        document.querySelector('#subsidyPrice').value = formatPrice(shopPrice - actualPrice);
+        setFieldValueAnimated('#actualPrice', formatPrice(actualPrice));
+        setFieldValueAnimated('#subsidyPrice', formatPrice(shopPrice - actualPrice));
         _calcGuard = false;
+        schedulePreviewRender();
     }
 
     function reverseCalcPrice() {
@@ -3432,9 +3476,131 @@
         }
 
         _calcGuard = true;
-        document.querySelector('#shopPrice').value = formatPrice(shopPrice);
-        document.querySelector('#subsidyPrice').value = formatPrice(shopPrice - actualPrice);
+        setFieldValueAnimated('#shopPrice', formatPrice(shopPrice));
+        setFieldValueAnimated('#subsidyPrice', formatPrice(shopPrice - actualPrice));
         _calcGuard = false;
+        schedulePreviewRender();
+    }
+
+    let _previewRafId = null;
+
+    function schedulePreviewRender() {
+        if (_previewRafId) return;
+        _previewRafId = requestAnimationFrame(() => {
+            _previewRafId = null;
+            renderOrderPreview();
+        });
+    }
+
+    function formatReceiptMoney(value) {
+        if (value === "" || value === null || value === undefined) return "";
+        const num = Number(value);
+        if (!Number.isFinite(num)) return "";
+        return `¥${num.toFixed(2)}`;
+    }
+
+    function buildReceiptAddress(formData) {
+        const region = [formData.city, formData.district, formData.townName].filter(Boolean).join("");
+        return [region, formData.detailAddress].filter(Boolean).join(" ");
+    }
+
+    function readReceiptValues(container) {
+        const map = new Map();
+        container.querySelectorAll('[data-receipt-key]').forEach(el => {
+            map.set(el.dataset.receiptKey, el.textContent.replace(/\s+/g, ' ').trim());
+        });
+        return map;
+    }
+
+    /** 小票每行对应的来源输入框，用户正在这个框里打字时该行不做动画，避免逐字闪动 */
+    const RECEIPT_KEY_SOURCE_ID = {
+        name: 'buyerName',
+        mobile: 'buyerMobile',
+        address: 'detailAddress',
+        goods: 'goodsCode',
+        filing: 'filingPrice',
+        shop: 'shopPrice',
+        subsidy: 'subsidyPrice',
+        total: 'actualPrice'
+    };
+
+    /** 小票每次整体重绘，这里只给内容真的变了的那几行补上动画 */
+    function animateChangedReceiptValues(container, prevValues) {
+        if (!prevValues.size || prefersReducedMotion()) return;
+        const activeId = document.activeElement?.id || '';
+        container.querySelectorAll('[data-receipt-key]').forEach(el => {
+            const key = el.dataset.receiptKey;
+            if (!prevValues.has(key)) return;
+            if (prevValues.get(key) === el.textContent.replace(/\s+/g, ' ').trim()) return;
+            if (activeId && RECEIPT_KEY_SOURCE_ID[key] === activeId) return;
+            el.classList.add(key === 'total' ? 'value-pop' : 'text-swap');
+        });
+    }
+
+    function renderOrderPreview() {
+        const container = document.getElementById('orderPreview');
+        if (!container) return;
+
+        const fd = collectCurrentFormData();
+        const addressText = buildReceiptAddress(fd);
+        const hasContent = !!(fd.buyerName || fd.buyerMobile || addressText || fd.goodsCode
+            || fd.goodsName || fd.shopPrice || fd.actualPrice);
+
+        if (!hasContent) {
+            container.innerHTML = '<div class="receipt-empty">填写订单信息后自动生成小票预览</div>';
+            return;
+        }
+
+        const currentStore = state.storePayloads[state.currentStoreIndex];
+        const storeName = currentStore
+            ? getStoreDisplayName(currentStore, state.currentStoreIndex)
+            : "未获取门店信息";
+        const subsidyText = formatReceiptMoney(fd.subsidyPrice);
+
+        const amountRow = (label, value, key, extraClass = "") => value
+            ? `<div class="receipt-amount ${extraClass}">
+                    <span class="receipt-amount-label">${escapeHtml(label)}</span>
+                    <span class="receipt-amount-value" data-receipt-key="${key}">${escapeHtml(value)}</span>
+                </div>`
+            : '';
+
+        const infoRow = (label, value, key) => `
+            <div class="receipt-row">
+                <span class="receipt-label">${escapeHtml(label)}</span>
+                <span class="receipt-value" data-receipt-key="${key}">${escapeHtml(value || '未填写')}</span>
+            </div>`;
+
+        const prevValues = readReceiptValues(container);
+
+        container.innerHTML = `
+            <div class="receipt-head">
+                <span class="receipt-title">销售小票</span>
+                <span class="receipt-sub" data-receipt-key="store">${escapeHtml(storeName)}</span>
+            </div>
+            <div class="receipt-divider"></div>
+            ${infoRow('姓名', fd.buyerName, 'name')}
+            ${infoRow('电话', fd.buyerMobile, 'mobile')}
+            ${infoRow('地址', addressText, 'address')}
+            <div class="receipt-divider"></div>
+            <div class="receipt-row">
+                <span class="receipt-label">商品</span>
+                <span class="receipt-value" data-receipt-key="goods">
+                    <span class="receipt-goods-name">${escapeHtml(fd.goodsName || '未查询到商品')}</span>
+                </span>
+            </div>
+            <div class="receipt-divider"></div>
+            ${amountRow('备案价', formatReceiptMoney(fd.filingPrice), 'filing')}
+            ${amountRow('门店单价', formatReceiptMoney(fd.shopPrice), 'shop')}
+            ${amountRow('政府补贴', subsidyText ? `-${subsidyText}` : '', 'subsidy', 'receipt-amount--discount')}
+            <div class="receipt-divider"></div>
+            <div class="receipt-total">
+                <span class="receipt-total-label">实付合计</span>
+                <span class="receipt-total-value" data-receipt-key="total">${escapeHtml(formatReceiptMoney(fd.actualPrice) || '¥0.00')}</span>
+            </div>
+            <div class="receipt-foot">— 预览内容以实际提交结果为准 —</div>
+        `;
+
+        animateChangedReceiptValues(container, prevValues);
     }
 
     async function generateNextOrderNumber() {
@@ -3699,12 +3865,12 @@
         let { mobile, city, district, town, detail, goodsCode, name } = parsed;
 
         if (mobile && /^1[3-9]\d{9}$/.test(mobile)) {
-            document.querySelector('#buyerMobile').value = mobile;
+            setFieldValueAnimated('#buyerMobile', mobile);
             checkQualification();
         }
 
         if (name && /^[\u4e00-\u9fa5]{2,4}$/.test(name)) {
-            document.querySelector('#buyerName').value = name;
+            setFieldValueAnimated('#buyerName', name);
         }
 
         let matchedCity = "";
@@ -3767,15 +3933,17 @@
         }
 
         if (detail) {
-            document.querySelector('#detailAddress').value = detail;
+            setFieldValueAnimated('#detailAddress', detail);
         }
 
         if (goodsCode && /^69\d{8,}$/.test(goodsCode)) {
-            document.querySelector('#goodsCode').value = goodsCode;
+            setFieldValueAnimated('#goodsCode', goodsCode);
             if (state.currentToken) {
                 setTimeout(() => queryGoodsInfo(), 100);
             }
         }
+
+        schedulePreviewRender();
     }
 
     function regexSmartParse(raw) {
@@ -3792,7 +3960,7 @@
         const phoneMatch = raw.match(/1[3-9]\d{9}/);
         if (phoneMatch) {
             mobile = phoneMatch[0];
-            document.querySelector('#buyerMobile').value = mobile;
+            setFieldValueAnimated('#buyerMobile', mobile);
             checkQualification();
         }
 
@@ -3800,7 +3968,7 @@
         const goodsCodeMatch = raw.match(/69\d{8,}/);
         if (goodsCodeMatch) {
             goodsCode = goodsCodeMatch[0];
-            document.querySelector('#goodsCode').value = goodsCode;
+            setFieldValueAnimated('#goodsCode', goodsCode);
             if (state.currentToken) {
                 setTimeout(() => queryGoodsInfo(), 100);
             }
@@ -3817,7 +3985,7 @@
             const isAddress = candidate.length > 1 && addrKeywords.test(candidate);
             if (!isAddress) {
                 buyerName = candidate;
-                document.querySelector('#buyerName').value = buyerName;
+                setFieldValueAnimated('#buyerName', buyerName);
             }
         }
 
@@ -3923,7 +4091,8 @@
             .replace(/[\s\-—_,，。;；、\/]+/g, " ")
             .trim();
 
-        document.querySelector('#detailAddress').value = addr;
+        setFieldValueAnimated('#detailAddress', addr);
+        schedulePreviewRender();
     }
 
     // ==================== passGoodsList API 商品库 ====================
@@ -4426,6 +4595,10 @@
     })();
 
     function bindEventListeners() {
+        const formContainer = document.querySelector('.container');
+        formContainer?.addEventListener('input', schedulePreviewRender, true);
+        formContainer?.addEventListener('change', schedulePreviewRender, true);
+
         document.getElementById('openProductSearchBtn')?.addEventListener('click', () => {
             ProductSearch.open();
         });
@@ -4509,12 +4682,12 @@
             showRemindBtn(false);
         });
         document.getElementById('chipExpandBtn').addEventListener('click', toggleChipExpand);
-        document.getElementById('autoOrderNumCheckbox').addEventListener('change', toggleOrderInput);
+        document.getElementById('autoOrderNumCheckbox').addEventListener('change', () => toggleOrderInput());
         document.getElementById('goodsCode').addEventListener('blur', queryGoodsInfo);
         document.getElementById('shopPrice').addEventListener('change', calcPrice);
         document.getElementById('actualPrice').addEventListener('change', reverseCalcPrice);
-        document.getElementById('checkSncodeBtn').addEventListener('click', checkSncode);
         document.getElementById('submitOrderBtn').addEventListener('click', submitOrder);
+        document.getElementById('saveDraftFabBtn').addEventListener('click', saveCurrentAsDraft);
         document.getElementById('versionTrigger').addEventListener('click', handleVersionClick);
         document.getElementById('openLsEditorBtn').addEventListener('click', openLsEditor);
         document.getElementById('clearDebugLogsBtn').addEventListener('click', clearDebugLogs);
@@ -4531,18 +4704,27 @@
             if (validateBtn) {
                 const index = parseInt(validateBtn.dataset.index, 10);
                 validatePayloadEntry(index);
+                return;
             }
 
             const removeBtn = e.target.closest('.remove-payload-btn');
-            if (removeBtn && !removeBtn.disabled) {
-                const index = parseInt(removeBtn.dataset.index, 10);
-                removePayloadEntry(index);
+            if (removeBtn) {
+                if (!removeBtn.disabled) {
+                    const index = parseInt(removeBtn.dataset.index, 10);
+                    removePayloadEntry(index);
+                }
+                return;
             }
 
             const radio = e.target.closest('mdui-radio');
             if (radio && radio.value !== undefined) {
-                const index = parseInt(radio.value, 10);
-                setConfigDraftCurrentIndex(index);
+                setConfigDraftCurrentIndex(parseInt(radio.value, 10));
+                return;
+            }
+
+            const head = e.target.closest('.store-item-head');
+            if (head && head.dataset.storeIndex !== undefined) {
+                setConfigDraftCurrentIndex(parseInt(head.dataset.storeIndex, 10));
             }
         });
 
@@ -4662,7 +4844,6 @@
                 onConfirm: () => {
                     clearCurrentStoreDrafts();
                     renderDraftDrawerList();
-                    renderDraftBar();
                     updateDraftBadge();
                     showSnackbar({ message: "已清空所有暂存" });
                 }
@@ -4702,10 +4883,11 @@
 
         renderShopSwitchMenu();
         bindEventListeners();
+        toggleOrderInput();
         ProductSearch.init();
-        renderDraftBar();
         updateDraftBadge();
         updateQueueBadge();
+        renderOrderPreview();
 
         if (hasQueuedOrders()) {
             addLog(`启动自动检查，待检订单数: ${getAllQueuedOrders().length}`, "info");

@@ -4,3 +4,5 @@ node_modules/
 .gitignore
 .kilocode/rules/memory-bank/brief.md
 .kilocode/rules/memory-bank/product.md
+.kilo
+.playwright-mcp
