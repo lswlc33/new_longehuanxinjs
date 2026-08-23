@@ -266,6 +266,8 @@ mdui-card {
 .row {
     display: flex;
     gap: 12px;
+    /* 顶部对齐：某个字段因校验错误提示变高时，同行其他字段不被拉伸 */
+    align-items: flex-start;
 }
 
 .row>* {
@@ -290,9 +292,10 @@ mdui-select {
     margin-bottom: 12px;
 }
 
+/* 用 min-height 而非固定高度：出现校验错误提示时字段可以变高，把下方的品类 chips 顶开而不是被遮挡 */
 mdui-text-field:not([rows]),
 mdui-select {
-    height: 56px;
+    min-height: 56px;
 }
 
 .chip-container {

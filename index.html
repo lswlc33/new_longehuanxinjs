@@ -6,12 +6,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>商品预下单</title>
 
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
     <link rel="stylesheet" href="https://unpkg.com/mdui@2.1.4/mdui.css">
     <script src="https://unpkg.com/mdui@2.1.4/mdui.global.js"></script>
-    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
-    <link rel="stylesheet" crossorigin="anonymous"
+
+    <!-- 字体样式表异步加载，不阻塞首屏：先用系统字体渲染，字体下载完再替换 -->
+    <!-- 图标字体用 display=block，避免加载完成前露出连字名（如 settings） -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons&amp;display=block"
+        media="print" onload="this.media='all'">
+    <!-- MiSans 的 CDN 样式内已自带 font-display:swap，只需让样式表本身不阻塞渲染 -->
+    <link rel="stylesheet" crossorigin="anonymous" media="print" onload="this.media='all'"
         href="https://cdn.jsdelivr.net/npm/misans@4.1.0/lib/Normal/MiSans-Medium.min.css" />
-    <link rel="stylesheet" crossorigin="anonymous"
+    <link rel="stylesheet" crossorigin="anonymous" media="print" onload="this.media='all'"
         href="https://cdn.jsdelivr.net/npm/misans@4.1.0/lib/Normal/MiSans-Bold.min.css" />
 
     <link rel="stylesheet" href="styles.css">
