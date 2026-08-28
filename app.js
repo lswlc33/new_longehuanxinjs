@@ -103,6 +103,7 @@
         orderContextByKey: new Map(),
         _isRefreshingToken: false,
         currentUniscid: "",
+        currentGoodsUniscid: "",
         storeRuntimeByKey: {},
         storeConfigRevision: 0,
         currentUiGeneration: 0,
@@ -241,6 +242,7 @@
                 tokenExpiresAt: 0,
                 refreshPromise: null,
                 uniscid: "",
+                goodsUniscid: "",
                 regionTree: {},
                 lastError: ""
             };
@@ -1707,6 +1709,7 @@
         state.currentStoreIndex = index;
         state.currentToken = ensureStoreRuntime(getCurrentStoreKey()).token || "";
         state.currentUniscid = ensureStoreRuntime(getCurrentStoreKey()).uniscid || "";
+        state.currentGoodsUniscid = ensureStoreRuntime(getCurrentStoreKey()).goodsUniscid || "";
         state.regionTree = ensureStoreRuntime(getCurrentStoreKey()).regionTree || {};
         state.loginPayload = state.storePayloads[state.currentStoreIndex]?.payload?.trim() || "";
         persistStorePayloads();
@@ -2205,10 +2208,16 @@
             updateStatus(true);
             const shopName = res.data?.shopInfo?.shopName || "";
             const uniscid = res.data?.shopInfo?.uniscid || "";
+            const goodsUniscid = res.data?.shopInfo?.goodsUniscid || "";
             if (uniscid) {
                 state.currentUniscid = uniscid;
                 ensureStoreRuntime(storeKey).uniscid = uniscid;
                 addLog(`获取到 uniscid: ${uniscid}`, "info");
+            }
+            if (goodsUniscid) {
+                state.currentGoodsUniscid = goodsUniscid;
+                ensureStoreRuntime(storeKey).goodsUniscid = goodsUniscid;
+                addLog(`获取到 goodsUniscid: ${goodsUniscid}`, "info");
             }
             if (shopName) {
                 setTextAnimated(els.shopName, shopName);
@@ -2317,6 +2326,7 @@
         const currentRuntime = ensureStoreRuntime(getCurrentStoreKey());
         state.currentToken = currentRuntime.token || "";
         state.currentUniscid = currentRuntime.uniscid || "";
+        state.currentGoodsUniscid = currentRuntime.goodsUniscid || "";
         state.regionTree = currentRuntime.regionTree || {};
 
         state.loginPayload = state.storePayloads[state.currentStoreIndex]?.payload?.trim() || "";
@@ -4459,12 +4469,12 @@
         });
     }
 
-    async function loadPassGoodsCache(uniscid) {
+    async function loadPassGoodsCache(goodsUniscid) {
         try {
             const db = await openPassGoodsCacheDB();
             const tx = db.transaction(PASS_GOODS_CACHE_STORE, 'readonly');
             const result = await new Promise((resolve, reject) => {
-                const req = tx.objectStore(PASS_GOODS_CACHE_STORE).get(uniscid);
+                const req = tx.objectStore(PASS_GOODS_CACHE_STORE).get(goodsUniscid);
                 req.onsuccess = () => resolve(req.result);
                 req.onerror = () => reject(req.error);
             });
@@ -4475,12 +4485,12 @@
         }
     }
 
-    async function savePassGoodsCache(uniscid, data, totalCount) {
+    async function savePassGoodsCache(goodsUniscid, data, totalCount) {
         try {
             const db = await openPassGoodsCacheDB();
             const tx = db.transaction(PASS_GOODS_CACHE_STORE, 'readwrite');
             tx.objectStore(PASS_GOODS_CACHE_STORE).put({
-                uniscid,
+                uniscid: goodsUniscid,
                 data,
                 totalCount,
                 timestamp: Date.now()
@@ -4492,17 +4502,17 @@
         }
     }
 
-    async function fetchPassGoodsList(uniscid, storeKey, onProgress) {
-        if (!uniscid) {
-            addLog('fetchPassGoodsList: uniscid 为空', 'warn');
+    async function fetchPassGoodsList(goodsUniscid, storeKey, onProgress) {
+        if (!goodsUniscid) {
+            addLog('fetchPassGoodsList: goodsUniscid 为空', 'warn');
             return null;
         }
 
-        addLog(`开始拉取商品库 [${uniscid}]...`, 'info');
+        addLog(`开始拉取商品库 [${goodsUniscid}]...`, 'info');
         if (onProgress) onProgress('正在查询商品总数...');
 
         const countRes = await callApi('/approval/passGoodsList', 'POST', {
-            uniscid,
+            goodsUniscid,
             pageSize: 1,
             pageNum: 1
         }, storeKey);
@@ -4522,7 +4532,7 @@
         if (onProgress) onProgress(`正在拉取 ${totalCount} 条商品数据...`);
 
         const dataRes = await callApi('/approval/passGoodsList', 'POST', {
-            uniscid,
+            goodsUniscid,
             pageSize: totalCount,
             pageNum: 1
         }, storeKey);
@@ -4535,7 +4545,7 @@
         const items = dataRes.data || [];
         addLog(`商品库拉取完成: ${items.length} 条`, 'info');
 
-        await savePassGoodsCache(uniscid, items, totalCount);
+        await savePassGoodsCache(goodsUniscid, items, totalCount);
 
         return { data: items, totalCount };
     }
@@ -4794,15 +4804,15 @@
 
             const storeKey = getCurrentStoreKey();
             const uiGeneration = state.currentUiGeneration;
-            const uniscid = state.currentUniscid;
-            const contextKey = `${storeKey}|${uniscid}`;
+            const goodsUniscid = state.currentGoodsUniscid;
+            const contextKey = `${storeKey}|${goodsUniscid}`;
             if (dataLoaded && sheetNames.length > 0 && loadedContextKey === contextKey) {
                 showParsed(currentFileName);
                 return;
             }
 
-            if (!uniscid) {
-                $('psResultsList').innerHTML = '<div style="padding:40px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="info" style="font-size:36px;opacity:0.3;display:block;margin:0 auto 6px;"></mdui-icon>未获取到 uniscid，请先登录</div>';
+            if (!goodsUniscid) {
+                $('psResultsList').innerHTML = '<div style="padding:40px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="info" style="font-size:36px;opacity:0.3;display:block;margin:0 auto 6px;"></mdui-icon>未获取到 goodsUniscid，请先登录</div>';
                 $('psSearchBar').style.display = 'none';
                 $('psSearchStatus').style.display = 'none';
                 $('psBottomBar').style.display = 'none';
@@ -4814,7 +4824,7 @@
             $('psSearchStatus').style.display = 'none';
             $('psBottomBar').style.display = 'none';
 
-            const cached = await loadPassGoodsCache(uniscid);
+            const cached = await loadPassGoodsCache(goodsUniscid);
             if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) return;
             if (cached && cached.data && cached.data.length > 0) {
                 const age = Date.now() - (cached.timestamp || 0);
@@ -4824,12 +4834,12 @@
                 } else {
                     addLog(`使用缓存商品库: ${cached.data.length} 条 (${hours}小时前更新)`, 'info');
                     localStorage.setItem(CONSTANTS.PASS_GOODS_COUNT_KEY, String(cached.data.length));
-                    loadApiDataIntoSearch(cached.data, uniscid, contextKey);
+                    loadApiDataIntoSearch(cached.data, goodsUniscid, contextKey);
                     return;
                 }
             }
 
-            const result = await fetchPassGoodsList(uniscid, storeKey, (msg) => {
+            const result = await fetchPassGoodsList(goodsUniscid, storeKey, (msg) => {
                 if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) return;
                 $('psResultsList').innerHTML = '<div class="ps-loading-box"><mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>' + escapeHtml(msg) + '</span></div>';
             });
@@ -4837,7 +4847,7 @@
 
             if (result && result.data && result.data.length > 0) {
                 localStorage.setItem(CONSTANTS.PASS_GOODS_COUNT_KEY, String(result.data.length));
-                loadApiDataIntoSearch(result.data, uniscid, contextKey);
+                loadApiDataIntoSearch(result.data, goodsUniscid, contextKey);
             } else {
                 $('psResultsList').innerHTML = '<div style="padding:40px;text-align:center;color:rgb(var(--mdui-color-outline));"><mdui-icon name="inventory_2" style="font-size:36px;opacity:0.3;display:block;margin:0 auto 6px;"></mdui-icon>商品库为空或拉取失败</div>';
             }
@@ -4857,13 +4867,13 @@
         async function refreshGoodsPool() {
             const storeKey = getCurrentStoreKey();
             const uiGeneration = state.currentUiGeneration;
-            const uniscid = state.currentUniscid;
-            const contextKey = `${storeKey}|${uniscid}`;
-            if (!uniscid) {
-                return showSnackbar({ message: '未获取到 uniscid，请先登录' });
+            const goodsUniscid = state.currentGoodsUniscid;
+            const contextKey = `${storeKey}|${goodsUniscid}`;
+            if (!goodsUniscid) {
+                return showSnackbar({ message: '未获取到 goodsUniscid，请先登录' });
             }
 
-            addLog(`强制刷新商品库 [${uniscid}]...`, 'info');
+            addLog(`强制刷新商品库 [${goodsUniscid}]...`, 'info');
             showSnackbar({ message: '正在刷新商品库...' });
 
             const lastCount = parseInt(localStorage.getItem(CONSTANTS.PASS_GOODS_COUNT_KEY) || '0', 10);
@@ -4882,7 +4892,7 @@
             $('psBottomBar').style.display = 'none';
             $('psResultsList').style.display = '';
 
-            const result = await fetchPassGoodsList(uniscid, storeKey, (msg) => {
+            const result = await fetchPassGoodsList(goodsUniscid, storeKey, (msg) => {
                 if (uiGeneration !== state.currentUiGeneration || storeKey !== getCurrentStoreKey()) return;
                 $('psResultsList').innerHTML = '<div class="ps-loading-box"><mdui-circular-progress style="width:24px;height:24px;"></mdui-circular-progress><span>' + escapeHtml(msg) + '</span></div>';
             });
@@ -4891,7 +4901,7 @@
             if (result && result.data && result.data.length > 0) {
                 const newCount = result.data.length;
                 localStorage.setItem(CONSTANTS.PASS_GOODS_COUNT_KEY, String(newCount));
-                loadApiDataIntoSearch(result.data, uniscid, contextKey);
+                loadApiDataIntoSearch(result.data, goodsUniscid, contextKey);
                 if (lastCount > 0 && newCount > lastCount) {
                     const added = newCount - lastCount;
                     addLog(`商品库更新: ${lastCount} -> ${newCount} (+${added})`, 'info');
