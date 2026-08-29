@@ -4512,7 +4512,7 @@
         if (onProgress) onProgress('正在查询商品总数...');
 
         const countRes = await callApi('/approval/passGoodsList', 'POST', {
-            goodsUniscid,
+            uniscid: goodsUniscid,
             pageSize: 1,
             pageNum: 1
         }, storeKey);
@@ -4532,7 +4532,7 @@
         if (onProgress) onProgress(`正在拉取 ${totalCount} 条商品数据...`);
 
         const dataRes = await callApi('/approval/passGoodsList', 'POST', {
-            goodsUniscid,
+            uniscid: goodsUniscid,
             pageSize: totalCount,
             pageNum: 1
         }, storeKey);
